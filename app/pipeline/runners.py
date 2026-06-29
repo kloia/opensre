@@ -136,6 +136,7 @@ def run_chat(state: AgentState, _config: NodeConfig | None = None) -> AgentState
 async def astream_investigation(
     raw_alert: str | dict[str, Any],
     *,
+    resolved_integrations: dict[str, Any] | None = None,
     opensre_evaluate: bool = False,
     investigation_metadata: tuple[str, str, str] | None = None,
 ) -> AsyncIterator[Any]:
@@ -152,6 +153,8 @@ async def astream_investigation(
         opensre_evaluate=opensre_evaluate,
         investigation_metadata=investigation_metadata,
     )
+    if resolved_integrations is not None:
+        cast(dict[str, Any], initial)["resolved_integrations"] = resolved_integrations
 
     # Silence the global ProgressTracker before starting the background thread
     # so pipeline internals (extract_alert, resolve_integrations, etc.) don't
