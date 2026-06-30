@@ -52,6 +52,13 @@ INTEGRATION_SPECS: tuple[IntegrationSpec, ...] = (
         verify_order=3,
     ),
     IntegrationSpec(
+        service="instana",
+        has_verifier=True,
+        direct_effective=True,
+        core_verify=True,
+        verify_order=49,
+    ),
+    IntegrationSpec(
         service="groundcover",
         aliases=("gc",),
         has_verifier=True,

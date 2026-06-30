@@ -33,6 +33,7 @@ from integrations.config_models import (
     HelmIntegrationConfig,
     HoneycombIntegrationConfig,
     IncidentIoIntegrationConfig,
+    InstanaIntegrationConfig,
     JiraIntegrationConfig,
     OpsGenieIntegrationConfig,
     PagerDutyIntegrationConfig,
@@ -59,6 +60,7 @@ from integrations.groundcover import classify as _classify_groundcover
 from integrations.helm import classify as _classify_helm
 from integrations.honeycomb import classify as _classify_honeycomb
 from integrations.incident_io import classify as _classify_incident_io
+from integrations.instana import classify as _classify_instana
 from integrations.jenkins import classify as _classify_jenkins
 from integrations.jenkins import jenkins_config_from_env
 from integrations.jira import classify as _classify_jira
@@ -232,6 +234,7 @@ _CLASSIFIERS: dict[str, _ClassifyFn] = {
     "grafana_local": _classify_grafana,
     "aws": _classify_aws,
     "datadog": _classify_datadog,
+    "instana": _classify_instana,
     "groundcover": _classify_groundcover,
     "honeycomb": _classify_honeycomb,
     "coralogix": _classify_coralogix,
@@ -428,6 +431,23 @@ def load_env_integrations() -> list[dict[str, Any]]:
                 _active_env_record(
                     "datadog",
                     datadog_config.model_dump(exclude={"integration_id"}),
+                )
+            )
+
+    instana_base_url = os.getenv("INSTANA_BASE_URL", "").strip()
+    instana_api_token = os.getenv("INSTANA_API_TOKEN", "").strip()
+    if instana_base_url and instana_api_token:
+        try:
+            instana_config = InstanaIntegrationConfig.model_validate(
+                {"base_url": instana_base_url, "api_token": instana_api_token}
+            )
+        except Exception as exc:
+            _report_env_loader_failure(exc, integration="instana")
+        else:
+            integrations.append(
+                _active_env_record(
+                    "instana",
+                    instana_config.model_dump(exclude={"integration_id"}),
                 )
             )
 
@@ -1611,6 +1631,19 @@ def resolve_effective_integrations(
                     "site": str(datadog_credentials.get("site", "datadoghq.com")).strip()
                     or "datadoghq.com",
                     "integration_id": str(datadog_store_integration.get("id", "")).strip(),
+                },
+            )
+
+    if "instana" not in effective:
+        instana_store_integration = store_integration_by_service.get("instana")
+        if isinstance(instana_store_integration, dict):
+            instana_credentials = _raw_credentials(instana_store_integration)
+            effective["instana"] = _effective_entry(
+                "local store",
+                {
+                    "base_url": str(instana_credentials.get("base_url", "")).strip(),
+                    "api_token": str(instana_credentials.get("api_token", "")).strip(),
+                    "integration_id": str(instana_store_integration.get("id", "")).strip(),
                 },
             )
 
