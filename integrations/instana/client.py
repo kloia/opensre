@@ -307,10 +307,12 @@ class InstanaClient:
     ) -> list[dict[str, Any]]:
         """Search Instana logs by query/service within a time window.
 
-        Endpoint pending A0 verification against the sandbox: this POSTs to the
-        Instana log-analytics endpoint (`/api/log/analyze/logs`) with a timeFrame.
-        Raises on any transport/HTTP error so the tool layer can degrade to the
-        graceful-unavailable path (a tenant with no log monitoring returns 404).
+        Targets the Instana Log Management API (``/api/log/analyze/logs``), which is
+        the intended endpoint but is unavailable on APM-only tenants: every
+        ``/api/log/...`` path returns 404 there, and the endpoint could NOT be
+        verified against the A0 sandbox (Log Management was not licensed). This method
+        raises on any transport/HTTP error so the tool layer degrades to the
+        graceful-unavailable path.
         """
         body: dict[str, Any] = {
             "timeFrame": {"windowSize": window_size_ms},

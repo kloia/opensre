@@ -686,9 +686,11 @@ def instana_search_logs(
 ) -> dict:
     """Search Instana logs, degrading gracefully when the log API is unavailable.
 
-    The Instana log endpoint is pending A0 verification against the sandbox; until
-    then any error (incl. 404 from a tenant with no log monitoring) returns a
-    structured ``available: False`` so the tool never crashes the agent loop.
+    Log Management is a separately-licensed Instana capability. On tenants without
+    it (e.g. APM-only) every ``/api/log/...`` endpoint returns 404, so this tool
+    returns a structured ``available: False`` rather than crashing the agent loop.
+    When logs are unavailable, use ``instana_error_analysis`` for the real exception
+    text behind a service's errors.
     """
     try:
         client = _resolve_client(base_url, api_token, _client_override)
