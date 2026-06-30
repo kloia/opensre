@@ -14,6 +14,7 @@ EvidenceSource = Literal[
     "grafana",
     "dagster",
     "datadog",
+    "instana",
     "groundcover",
     "honeycomb",
     "coralogix",
