@@ -174,6 +174,8 @@ def test_error_analysis_happy_path() -> None:
     assert result["error_messages"][0]["count"] == 7702
     # with a service_name, top_services is omitted or empty (focused on the service)
     fake.error_messages.assert_called_once()
+    assert result["top_services"] == []
+    fake.errors_by_service.assert_not_called()
 
 
 def test_error_analysis_no_service_returns_top_services() -> None:

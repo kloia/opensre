@@ -49,9 +49,15 @@ def _sum_series(metrics: dict[str, Any]) -> int:
     total = 0.0
     for series in (metrics or {}).values():
         for point in series or []:
+            # Instana call-groups series points are always [ts, value] 2-tuples
             if isinstance(point, (list, tuple)) and len(point) == 2 and point[1] is not None:
                 total += point[1]
     return int(total)
+
+
+def _service_filter(service_name: str) -> dict[str, Any]:
+    """Build the Instana TAG_FILTER for a service.name EQUALS match."""
+    return {"type": "TAG_FILTER", "name": "service.name", "operator": "EQUALS", "value": service_name}
 
 
 def _region_from(data: dict[str, Any]) -> str:
@@ -149,12 +155,7 @@ class InstanaClient:
             "timeFrame": {"windowSize": window_size_ms},
         }
         if service_name:
-            body["tagFilterExpression"] = {
-                "type": "TAG_FILTER",
-                "name": "service.name",
-                "operator": "EQUALS",
-                "value": service_name,
-            }
+            body["tagFilterExpression"] = _service_filter(service_name)
         m = self.post("/api/application-monitoring/v2/metrics", json=body)
         series_map = (m.get("metrics") or {}) if isinstance(m, dict) else {}
         summary = {name: _summarize_series(series) for name, series in series_map.items()}
@@ -181,12 +182,7 @@ class InstanaClient:
         """Return the slowest traces (latency desc) for a service from Instana."""
         body = {
             "timeFrame": {"windowSize": window_size_ms},
-            "tagFilterExpression": {
-                "type": "TAG_FILTER",
-                "name": "service.name",
-                "operator": "EQUALS",
-                "value": service_name,
-            },
+            "tagFilterExpression": _service_filter(service_name),
             "order": {"by": "latency", "direction": "DESC"},
             "pagination": {"retrievalSize": max_traces},
         }
@@ -232,12 +228,7 @@ class InstanaClient:
                 "logicalOperator": "AND",
                 "elements": [
                     self._ERRONEOUS_FILTER,
-                    {
-                        "type": "TAG_FILTER",
-                        "name": "service.name",
-                        "operator": "EQUALS",
-                        "value": service_name,
-                    },
+                    _service_filter(service_name),
                 ],
             }
         else:
@@ -321,12 +312,7 @@ class InstanaClient:
         if query:
             body["query"] = query
         if service_name:
-            body["tagFilterExpression"] = {
-                "type": "TAG_FILTER",
-                "name": "service.name",
-                "operator": "EQUALS",
-                "value": service_name,
-            }
+            body["tagFilterExpression"] = _service_filter(service_name)
         resp = self.post("/api/log/analyze/logs", json=body)
         items = resp.get("items", []) if isinstance(resp, dict) else []
         return items if isinstance(items, list) else []
