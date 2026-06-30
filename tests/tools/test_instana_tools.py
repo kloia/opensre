@@ -95,21 +95,13 @@ def test_get_events_happy_path() -> None:
     assert result["events"][0]["eventId"] == "e1"  # open + highest severity first
 
 
-def test_trace_detail_surfaces_per_span_errors() -> None:
+def test_trace_detail_surfaces_error_counts() -> None:
     fake = MagicMock()
     fake.get_trace_detail.return_value = [
-        {
-            "name": "GET /ok",
-            "duration": 50,
-            "errorCount": 0,
-        },
-        {
-            "name": "POST /db",
-            "duration": 120,
-            "errorCount": 1,
-            "errorType": "TimeoutException",
-            "errorMessage": "connection timed out after 30s",
-        },
+        {"name": "GET /ok", "duration": 50, "errorCount": 0,
+         "destination": {"service": {"label": "svc-a"}, "endpoint": {"label": "/ok"}}},
+        {"name": "POST /db", "duration": 120, "errorCount": 1,
+         "destination": {"service": {"label": "svc-db"}, "endpoint": {"label": "/db"}}},
     ]
     result = instana_get_trace_detail(trace_id="t1", _client_override=fake)
     assert result["available"] is True
@@ -117,9 +109,11 @@ def test_trace_detail_surfaces_per_span_errors() -> None:
     assert result["error_span_count"] == 1
     slowest = result["slowest_spans"]
     assert slowest[0]["name"] == "POST /db"  # duration-ranked
-    assert slowest[0]["error_type"] == "TimeoutException"
-    assert slowest[0]["error_message"] == "connection timed out after 30s"
-    assert slowest[1]["error_type"] is None
+    assert slowest[0]["error_count"] == 1
+    assert slowest[0]["destination_service"] == "svc-db"
+    # error_type/error_message keys removed (no longer probed)
+    assert "error_type" not in slowest[0]
+    assert "error_message" not in slowest[0]
 
 
 def test_investigation_context_bundles_signals() -> None:

@@ -94,51 +94,6 @@ def _severity(e: dict[str, Any]) -> int:
     return sv if isinstance(sv, int) else -99
 
 
-def _span_error_detail(sp: dict[str, Any]) -> tuple[str | None, str | None]:
-    """Best-effort extraction of (error_type, error_message) from a span.
-
-    Instana span error/exception fields are not contractually fixed across
-    tenants/plugins, so this probes the most common shapes:
-    ``span.error`` / ``span.errorMessage`` / ``span.exception`` / nested
-    ``span.data.*``. Returns (None, None) when nothing matches.
-    """
-    error_type = (
-        sp.get("error_type")
-        or sp.get("errorType")
-        or sp.get("exceptionType")
-        or sp.get("exception")
-    )
-    error_message = (
-        sp.get("error_message")
-        or sp.get("errorMessage")
-        or sp.get("exceptionMessage")
-        or sp.get("message")
-    )
-    data = sp.get("data")
-    if isinstance(data, dict):
-        error_type = error_type or data.get("error.type") or data.get("exception.type")
-        error_message = error_message or data.get("error.message") or data.get("exception.message")
-    if isinstance(error_type, str):
-        error_type = error_type.strip() or None
-    else:
-        error_type = None
-    if isinstance(error_message, str):
-        error_message = error_message.strip()[:200] or None
-    else:
-        error_message = None
-    return error_type, error_message
-
-
-def _span_is_error(sp: dict[str, Any]) -> bool:
-    if sp.get("error") is True:
-        return True
-    ec = sp.get("errorCount")
-    if isinstance(ec, (int, float)) and ec > 0:
-        return True
-    err_type, err_msg = _span_error_detail(sp)
-    return bool(err_type or err_msg)
-
-
 # ---------------------------------------------------------------------------
 # Ported tools
 # ---------------------------------------------------------------------------
@@ -385,8 +340,8 @@ def instana_traces(
     description=(
         "Drill into a single Instana trace by id (ids come from instana_traces) and return "
         "its spans ranked by duration, each with the downstream destination service/endpoint, "
-        "self time, and any error type/message. Use it to name the exact slow or erroring "
-        "downstream hop."
+        "self time, and an error count. Use it to name the exact slow or erroring downstream "
+        "hop. For the actual exception text behind those errors, use instana_error_analysis."
     ),
     use_cases=["Drilling into one trace to find the slow/failing downstream call or service"],
     requires=["trace_id"],
@@ -407,10 +362,11 @@ def instana_get_trace_detail(
 ) -> dict:
     """Return a compact, duration-ranked span summary for a single Instana trace.
 
-    Each span carries the fields needed to localize the bottleneck (name, duration,
-    self time, downstream destination service/endpoint, error count) plus best-effort
-    per-span error detail (``error_type``, ``error_message``) and a top-level
-    ``error_span_count`` so erroring downstream hops are surfaced for RCA.
+    Each span carries the fields needed to localize the bottleneck: name, duration,
+    self time, downstream destination service/endpoint, and an integer error count,
+    plus a top-level ``error_span_count`` so erroring downstream hops are surfaced.
+    The v2 trace-detail payload does not carry per-span exception text; for the real
+    error/exception messages behind these errors, use ``instana_error_analysis``.
     """
     tid = trace_id.strip()
     if not tid:
@@ -427,8 +383,8 @@ def instana_get_trace_detail(
         error_span_count = 0
         for sp in spans:
             dst = sp.get("destination") or {}
-            err_type, err_msg = _span_error_detail(sp)
-            if _span_is_error(sp):
+            ec = sp.get("errorCount")
+            if isinstance(ec, (int, float)) and ec > 0:
                 error_span_count += 1
             summarized.append(
                 {
@@ -437,9 +393,7 @@ def instana_get_trace_detail(
                     "self_time_ms": sp.get("minSelfTime"),
                     "destination_service": (dst.get("service") or {}).get("label"),
                     "destination_endpoint": (dst.get("endpoint") or {}).get("label"),
-                    "error_count": sp.get("errorCount"),
-                    "error_type": err_type,
-                    "error_message": err_msg,
+                    "error_count": ec,
                 }
             )
         summarized.sort(key=lambda s: s.get("duration_ms") or 0, reverse=True)
