@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from integrations.instana.tools import (
+    instana_error_analysis,
     instana_get_events,
     instana_get_investigation_context,
     instana_get_trace_detail,
@@ -38,6 +39,11 @@ class TestInstanaTraceDetailContract(BaseToolContract):
 class TestInstanaSearchLogsContract(BaseToolContract):
     def get_tool_under_test(self):
         return instana_search_logs.__opensre_registered_tool__
+
+
+class TestInstanaErrorAnalysisContract(BaseToolContract):
+    def get_tool_under_test(self):
+        return instana_error_analysis.__opensre_registered_tool__
 
 
 # ---------------------------------------------------------------------------
@@ -154,3 +160,38 @@ def test_search_logs_graceful_unavailable() -> None:
     assert result["source"] == "instana_logs"
     assert result["logs"] == []
     assert "404" in result["error"]
+
+
+def test_error_analysis_happy_path() -> None:
+    fake = MagicMock()
+    fake.error_messages.return_value = [
+        {"message": "NOT_FOUND: National ID not found", "count": 7702},
+        {"message": "FAILED_PRECONDITION: dup", "count": 33},
+    ]
+    fake.errors_by_service.return_value = [
+        {"service": "catalog", "count": 4498},
+        {"service": "tiam-ms-profile", "count": 803},
+    ]
+    result = instana_error_analysis(service_name="tiam-ms-profile", _client_override=fake)
+    assert result["available"] is True
+    assert result["source"] == "instana"
+    assert result["error_messages"][0]["count"] == 7702
+    # with a service_name, top_services is omitted or empty (focused on the service)
+    fake.error_messages.assert_called_once()
+
+
+def test_error_analysis_no_service_returns_top_services() -> None:
+    fake = MagicMock()
+    fake.error_messages.return_value = []
+    fake.errors_by_service.return_value = [{"service": "catalog", "count": 4498}]
+    result = instana_error_analysis(_client_override=fake)
+    assert result["available"] is True
+    assert result["top_services"][0]["service"] == "catalog"
+
+
+def test_error_analysis_graceful_unavailable() -> None:
+    fake = MagicMock()
+    fake.error_messages.side_effect = RuntimeError("422 bad body")
+    result = instana_error_analysis(service_name="svc", _client_override=fake)
+    assert result["available"] is False
+    assert result["error_messages"] == []

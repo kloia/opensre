@@ -617,6 +617,76 @@ def instana_get_investigation_context(
 
 
 @tool(
+    name="instana_error_analysis",
+    display_name="Instana error analysis",
+    source="instana",
+    evidence_type="events",
+    tags=("errors", "exceptions", "rca"),
+    cost_tier="moderate",
+    description=(
+        "Return the actual error/exception messages Instana recorded for erroring calls, "
+        "ranked by occurrence count. With a service_name, returns that service's top error "
+        "messages (e.g. 'NOT_FOUND: National ID not found', Postgres '23505: duplicate key', "
+        "Mongo 'E11000 duplicate key'). Without one, also returns which services are erroring "
+        "most. This is the primary signal for naming the real cause of failures."
+    ),
+    use_cases=[
+        "Finding the real exception text behind a service's errors",
+        "Ranking which services are erroring most across the system",
+    ],
+    requires=[],
+    input_schema={
+        "type": "object",
+        "properties": {
+            "service_name": {"type": "string"},
+            "window_size_ms": {"type": "integer", "default": 3_600_000},
+            "limit": {"type": "integer", "default": 10},
+        },
+        "required": [],
+    },
+    side_effect_level="read_only",
+    injected_params=_INJECTED,
+    is_available=_instana_available,
+    extract_params=_instana_extract_params,
+)
+def instana_error_analysis(
+    service_name: str = "",
+    window_size_ms: int = 3_600_000,
+    limit: int = 10,
+    base_url: str = "",
+    api_token: str = "",
+    _client_override: InstanaClient | None = None,
+    **_kwargs: Any,
+) -> dict:
+    """Return ranked real error messages (and, when unscoped, top erroring services)."""
+    try:
+        client = _resolve_client(base_url, api_token, _client_override)
+        svc = service_name.strip() or None
+        messages = client.error_messages(
+            service_name=svc, window_size_ms=window_size_ms, limit=limit
+        )
+        top_services: list[dict[str, Any]] = []
+        if svc is None:
+            top_services = client.errors_by_service(window_size_ms=window_size_ms, limit=limit)
+        return {
+            "source": "instana",
+            "available": True,
+            "service_name": svc,
+            "error_messages": messages,
+            "top_services": top_services,
+        }
+    except Exception as exc:
+        return {
+            "source": "instana",
+            "available": False,
+            "error": _error(exc),
+            "service_name": service_name.strip() or None,
+            "error_messages": [],
+            "top_services": [],
+        }
+
+
+@tool(
     name="instana_search_logs",
     display_name="Instana logs",
     source="instana",
