@@ -208,6 +208,37 @@ class InstanaClient:
         )
         return detail.get("items", []) if isinstance(detail, dict) else []
 
+    def search_logs(
+        self,
+        query: str = "",
+        service_name: str = "",
+        window_size_ms: int = 3_600_000,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search Instana logs by query/service within a time window.
+
+        Endpoint pending A0 verification against the sandbox: this POSTs to the
+        Instana log-analytics endpoint (`/api/log/analyze/logs`) with a timeFrame.
+        Raises on any transport/HTTP error so the tool layer can degrade to the
+        graceful-unavailable path (a tenant with no log monitoring returns 404).
+        """
+        body: dict[str, Any] = {
+            "timeFrame": {"windowSize": window_size_ms},
+            "pagination": {"retrievalSize": limit},
+        }
+        if query:
+            body["query"] = query
+        if service_name:
+            body["tagFilterExpression"] = {
+                "type": "TAG_FILTER",
+                "name": "service.name",
+                "operator": "EQUALS",
+                "value": service_name,
+            }
+        resp = self.post("/api/log/analyze/logs", json=body)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        return items if isinstance(items, list) else []
+
     def resolve_aws_resource(self, snapshot_id: str) -> dict[str, Any]:
         """Return {aws_account_id, region, arn, ...} for an Instana AWS entity snapshot."""
         snap = self.get(f"/api/infrastructure-monitoring/snapshots/{snapshot_id}")
