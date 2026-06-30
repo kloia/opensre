@@ -79,6 +79,24 @@ class DatadogIntegrationConfig(StrictConfigModel):
         }
 
 
+class InstanaIntegrationConfig(StrictConfigModel):
+    """Normalized Instana credentials used by resolution and verification flows."""
+
+    base_url: str
+    api_token: str
+    integration_id: str = ""
+
+    _normalize_base_url = field_validator("base_url", mode="before")(normalize_url())
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"apiToken {self.api_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+
 class GroundcoverIntegrationConfig(StrictConfigModel):
     """Normalized groundcover credentials used by resolution and verification flows.
 
