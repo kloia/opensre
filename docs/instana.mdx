@@ -1,0 +1,77 @@
+---
+title: "Instana"
+---
+
+OpenSRE talks to Instana's REST API directly to investigate incidents: events,
+golden-signal metrics, slow/erroring traces, infrastructure, AWS resource
+mapping, and — most importantly — the actual exception text behind a service's
+errors.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `instana_get_events` | List significant Instana events/incidents in a window (ranked, with totals). |
+| `instana_get_event_detail` | Fetch one event by id or event URL. |
+| `instana_application_metrics` | Golden-signal metrics (latency, error rate, throughput) for a service. |
+| `instana_infrastructure_health` | Query hosts/containers/pods and their health. |
+| `instana_traces` | Slowest traces for a service (latency desc). |
+| `instana_get_trace_detail` | Spans of one trace, ranked by duration, with downstream service/endpoint and error count. |
+| `instana_error_analysis` | The real exception messages behind a service's errors, ranked by count (and which services error most). |
+| `instana_get_investigation_context` | One-shot RCA bundle: events + metrics + slowest traces + top error messages. |
+| `instana_resolve_aws_resource` | Map an Instana AWS entity (snapshotId) to its AWS account/region/ARN. |
+| `instana_search_logs` | Search Instana logs (requires Instana Log Management; returns unavailable on APM-only tenants). |
+
+## Configuration
+
+Set two values for your Instana integration:
+
+| Key | What it is |
+| --- | --- |
+| `INSTANA_BASE_URL` | Your Instana tenant URL, e.g. `https://apm-acme.instana.io`. |
+| `INSTANA_API_TOKEN` | An Instana API token with read access. |
+
+## Naming the root cause
+
+`instana_error_analysis` is the primary signal for naming a real root cause. It
+returns the actual exception strings Instana recorded for erroring calls —
+application errors and downstream database errors alike — ranked by how often
+they occurred, rather than just an error count.
+
+```text
+You: why is tiam-ms-profile erroring?
+
+instana_error_analysis(service_name="tiam-ms-profile")
+→ error_messages:
+    - "NOT_FOUND: National ID not found"        count: 7702
+    - "FAILED_PRECONDITION: duplicate request"  count: 33
+```
+
+Called without a `service_name`, it also returns which services are erroring most
+across the system:
+
+```text
+instana_error_analysis()
+→ top_services:
+    - catalog          count: 4498
+    - tiam-ms-profile  count: 803
+```
+
+## A one-shot start
+
+`instana_get_investigation_context` bundles the common starting signals in a
+single call — recent events, a golden-signal metric summary, the slowest traces,
+and the top real error messages for the service:
+
+```text
+instana_get_investigation_context(service_name="catalog")
+→ events, metrics, slowest_traces, error_messages
+```
+
+## A note on logs
+
+`instana_search_logs` uses Instana Log Management, which is a separately-licensed
+capability. On tenants without it (for example, APM-only tenants) every log
+endpoint returns 404 and the tool reports `available: false`. When logs are
+unavailable, use `instana_error_analysis` for the real exception text behind a
+service's errors.
