@@ -28,6 +28,7 @@ from tools.skill_guidance import format_tool_skill_guidance, load_tool_skill_gui
 _INTEGRATION_TOOL_PACKAGES: tuple[str, ...] = (
     "integrations.datadog.tools",
     "integrations.grafana.tools",
+    "integrations.instana.tools",
 )
 
 logger = logging.getLogger(__name__)
