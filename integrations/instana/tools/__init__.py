@@ -584,13 +584,20 @@ def instana_get_investigation_context(
                 max_traces=max_traces,
             )
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        def _error_messages() -> list[dict[str, Any]]:
+            return client.error_messages(
+                service_name=service_name, window_size_ms=window_size_ms, limit=max_traces
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
             fut_events = pool.submit(_events)
             fut_metrics = pool.submit(_metrics)
             fut_traces = pool.submit(_traces)
+            fut_errors = pool.submit(_error_messages)
             events = fut_events.result()
             metrics = fut_metrics.result()
             traces = fut_traces.result()
+            error_messages = fut_errors.result()
 
         error_spans = [t for t in traces if t.get("erroneous")]
         return {
@@ -601,6 +608,7 @@ def instana_get_investigation_context(
             "metrics": metrics.get("metrics", metrics),
             "slowest_traces": traces,
             "error_spans": error_spans,
+            "error_messages": error_messages,
             "truncation_note": f"events<={max_events}, traces<={max_traces}",
         }
     except Exception as exc:
@@ -613,6 +621,7 @@ def instana_get_investigation_context(
             "metrics": {},
             "slowest_traces": [],
             "error_spans": [],
+            "error_messages": [],
         }
 
 

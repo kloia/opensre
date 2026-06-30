@@ -130,6 +130,7 @@ def test_investigation_context_bundles_signals() -> None:
         {"trace_id": "t1", "erroneous": True},
         {"trace_id": "t2", "erroneous": False},
     ]
+    fake.error_messages.return_value = [{"message": "boom", "count": 5}]
     result = instana_get_investigation_context(service_name="svc", _client_override=fake)
     assert result["available"] is True
     assert result["service_name"] == "svc"
@@ -137,6 +138,7 @@ def test_investigation_context_bundles_signals() -> None:
     assert result["metrics"] == {"latency": {"latest": 1.2}}
     assert len(result["slowest_traces"]) == 2
     assert result["error_spans"] == [{"trace_id": "t1", "erroneous": True}]
+    assert result["error_messages"] == [{"message": "boom", "count": 5}]
     assert "truncation_note" in result
 
 
