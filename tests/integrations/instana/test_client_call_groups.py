@@ -1,0 +1,71 @@
+"""Unit tests for InstanaClient.analyze/call-groups error helpers (A0-validated shapes)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from integrations.instana.client import InstanaClient, InstanaConfig
+
+
+def _client_with_post(captured: dict[str, Any], response: dict[str, Any]) -> InstanaClient:
+    client = InstanaClient(
+        InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"})
+    )
+
+    def fake_post(path: str, json: dict[str, Any] | None = None) -> Any:
+        captured["path"] = path
+        captured["body"] = json
+        return response
+
+    client.post = fake_post  # type: ignore[method-assign]
+    return client
+
+
+_RESPONSE = {
+    "items": [
+        {"name": "NOT_FOUND: National ID not found",
+         "metrics": {"calls.sum.3600": [[1, 7000.0], [2, 702.0]]}},
+        {"name": "FAILED_PRECONDITION: dup", "metrics": {"calls.sum.3600": [[1, 33.0]]}},
+        {"name": None, "metrics": {"calls.sum.3600": [[1, 5.0]]}},
+    ]
+}
+
+
+def test_error_messages_unfiltered_body_and_parsing() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    out = client.error_messages(window_size_ms=6_000, limit=10)
+    # endpoint + group tag
+    assert cap["path"] == "/api/application-monitoring/analyze/call-groups"
+    assert cap["body"]["group"]["groupbyTag"] == "call.error.message"
+    # no service filter -> single trace.erroneous TAG_FILTER (no EXPRESSION wrapper)
+    tfe = cap["body"]["tagFilterExpression"]
+    assert tfe["type"] == "TAG_FILTER"
+    assert tfe["name"] == "trace.erroneous"
+    assert tfe["value"] is True
+    # parsing: name + summed count, ranked desc, None name -> "(no message)"
+    assert out[0] == {"message": "NOT_FOUND: National ID not found", "count": 7702}
+    assert out[1] == {"message": "FAILED_PRECONDITION: dup", "count": 33}
+    assert out[2]["message"] == "(no message)"
+
+
+def test_error_messages_with_service_filter_uses_AND_expression() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    client.error_messages(service_name="tiam-ms-profile", window_size_ms=6_000)
+    tfe = cap["body"]["tagFilterExpression"]
+    assert tfe["type"] == "EXPRESSION"
+    assert tfe["logicalOperator"] == "AND"
+    names = {e["name"] for e in tfe["elements"]}
+    assert names == {"trace.erroneous", "service.name"}
+    svc = next(e for e in tfe["elements"] if e["name"] == "service.name")
+    assert svc["value"] == "tiam-ms-profile"
+
+
+def test_errors_by_service_groups_by_service_name() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    out = client.errors_by_service(window_size_ms=6_000)
+    assert cap["body"]["group"]["groupbyTag"] == "service.name"
+    assert out[0]["count"] == 7702  # ranked desc, summed
+    assert "service" in out[0]
