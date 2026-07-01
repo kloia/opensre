@@ -74,7 +74,8 @@ def _safe(fn: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     HTTP 400 — must not blank the others, so each facet is isolated here.
     """
     try:
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        return result if isinstance(result, list) else []
     except Exception:
         return []
 
@@ -785,7 +786,10 @@ def instana_search_logs(
         )
     except Exception as exc:
         detail = _error(exc)
-        not_available = "404" in detail or "not found" in detail.lower()
+        # Prefer the real status code; only fall back to a tight text match ("HTTP 404")
+        # when there's no status, so a non-404 whose body mentions "not found" can't misfire.
+        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        not_available = status == 404 or (status is None and "HTTP 404" in detail)
         return {
             "source": "instana_logs",
             "available": False,
