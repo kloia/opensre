@@ -564,7 +564,14 @@ def instana_get_investigation_context(
         client = _resolve_client(base_url, api_token, _client_override)
 
         def _events() -> list[dict[str, Any]]:
-            return client.get_events(window_size_ms=window_size_ms)[:max_events]
+            raw = client.get_events(window_size_ms=window_size_ms)
+            return _rank_events(
+                raw,
+                min_severity=1,
+                open_only=False,
+                max_events=max_events,
+                include_changes=False,
+            )["events"]
 
         def _metrics() -> dict[str, Any]:
             return client.application_metrics(

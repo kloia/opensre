@@ -141,7 +141,7 @@ def test_trace_detail_surfaces_error_counts() -> None:
 
 def test_investigation_context_bundles_signals() -> None:
     fake = MagicMock()
-    fake.get_events.return_value = [{"eventId": "e1"}]
+    fake.get_events.return_value = [{"eventId": "e1", "severity": 5, "state": "open"}]
     fake.application_metrics.return_value = {"metrics": {"latency": {"latest": 1.2}}}
     fake.traces.return_value = [
         {"trace_id": "t1", "erroneous": True},
@@ -153,7 +153,7 @@ def test_investigation_context_bundles_signals() -> None:
     result = instana_get_investigation_context(service_name="svc", _client_override=fake)
     assert result["available"] is True
     assert result["service_name"] == "svc"
-    assert result["events"] == [{"eventId": "e1"}]
+    assert [e["eventId"] for e in result["events"]] == ["e1"]
     assert result["metrics"] == {"latency": {"latest": 1.2}}
     assert len(result["slowest_traces"]) == 2
     assert result["error_spans"] == [{"trace_id": "t1", "erroneous": True}]
@@ -161,6 +161,22 @@ def test_investigation_context_bundles_signals() -> None:
     assert result["http_status"] == [{"status": "500", "count": 9}]
     assert result["error_endpoints"] == [{"endpoint": "POST /pay", "count": 9}]
     assert "truncation_note" in result
+
+
+def test_investigation_context_events_are_ranked_and_denoised() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = [
+        {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 5},
+        {"eventId": "i1", "type": "issue", "severity": 7, "state": "open", "start": 4},
+    ]
+    fake.application_metrics.return_value = {"metrics": {}}
+    fake.traces.return_value = []
+    fake.error_messages.return_value = []
+    fake.error_http_status.return_value = []
+    fake.error_endpoints.return_value = []
+    result = instana_get_investigation_context(service_name="svc", _client_override=fake)
+    ids = [e["eventId"] for e in result["events"]]
+    assert ids == ["i1"]   # change c1 dropped, issue kept
 
 
 def test_search_logs_happy_path() -> None:
