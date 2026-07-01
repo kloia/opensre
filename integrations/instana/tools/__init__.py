@@ -782,10 +782,18 @@ def instana_search_logs(
             limit=limit,
         )
     except Exception as exc:
+        detail = _error(exc)
+        not_available = "404" in detail or "not found" in detail.lower()
         return {
             "source": "instana_logs",
             "available": False,
-            "error": _error(exc),
+            "retry": not not_available,
+            "error": (
+                "Instana Log Management is not enabled on this tenant — no logs available. "
+                "Do not retry instana_search_logs; use instana_error_analysis for error detail."
+                if not_available
+                else detail
+            ),
             "logs": [],
             "error_logs": [],
         }

@@ -202,13 +202,25 @@ def test_search_logs_happy_path() -> None:
 
 
 def test_search_logs_graceful_unavailable() -> None:
+    # A non-404 transport failure stays retryable and surfaces the raw detail.
     fake = MagicMock()
-    fake.search_logs.side_effect = RuntimeError("404 no log API")
+    fake.search_logs.side_effect = RuntimeError("500 upstream boom")
     result = instana_search_logs(service_name="svc", _client_override=fake)
     assert result["available"] is False
     assert result["source"] == "instana_logs"
     assert result["logs"] == []
-    assert "404" in result["error"]
+    assert result["retry"] is True
+    assert "500 upstream boom" in result["error"]
+
+
+def test_search_logs_404_is_non_retryable() -> None:
+    fake = MagicMock()
+    fake.search_logs.side_effect = RuntimeError("HTTP 404: not found")
+    result = instana_search_logs(service_name="svc", _client_override=fake)
+    assert result["available"] is False
+    assert result["retry"] is False
+    assert "Log Management" in result["error"]
+    assert result["logs"] == []
 
 
 def test_error_analysis_happy_path() -> None:
