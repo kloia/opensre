@@ -11,11 +11,11 @@ errors.
 
 | Tool | What it does |
 | --- | --- |
-| `instana_get_events` | List significant Instana events/incidents in a window (ranked, with totals). |
+| `instana_get_events` | List significant Instana events/incidents in a window (ranked, with totals). Excludes infra `change`-type noise by default — pass `include_changes=true` to include them. |
 | `instana_get_event_detail` | Fetch one event by id or event URL. |
 | `instana_application_metrics` | Golden-signal metrics (latency, error rate, throughput) for a service. |
 | `instana_infrastructure_health` | Query hosts/containers/pods and their health. |
-| `instana_traces` | Slowest traces for a service (latency desc). |
+| `instana_traces` | Slowest traces for a service (latency desc). For error-rate incidents, pass `erroneous_only=true` to get the actual failing traces. |
 | `instana_get_trace_detail` | Spans of one trace, ranked by duration, with downstream service/endpoint and error count. |
 | `instana_error_analysis` | The real exception messages behind a service's errors, ranked by count (and which services error most). |
 | `instana_get_investigation_context` | One-shot RCA bundle: events + metrics + slowest traces + top error messages. |
@@ -68,10 +68,22 @@ instana_get_investigation_context(service_name="catalog")
 → events, metrics, slowest_traces, error_messages
 ```
 
+## Focusing on the right events and traces
+
+By default `instana_get_events` drops `change`-type infrastructure events (host
+online/offline churn and similar) so real incidents and issues aren't crowded
+out. If you need that infra churn too, pass `include_changes=true`.
+
+For an error-rate incident, `instana_traces(service_name=..., erroneous_only=true)`
+returns the traces that actually failed instead of the slowest ones — the slowest
+traces are often not the erroring ones, so this lets you drill straight into a
+failing request. The default (no `erroneous_only`) still returns the slowest
+traces by latency for latency investigations.
+
 ## A note on logs
 
 `instana_search_logs` uses Instana Log Management, which is a separately-licensed
 capability. On tenants without it (for example, APM-only tenants) every log
-endpoint returns 404 and the tool reports `available: false`. When logs are
-unavailable, use `instana_error_analysis` for the real exception text behind a
-service's errors.
+endpoint returns 404 and the tool reports `available: false`. In that case the
+result is marked non-retryable — don't keep re-calling it — and you should use
+`instana_error_analysis` for the real exception text behind a service's errors.
