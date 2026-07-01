@@ -31,6 +31,27 @@ _RESPONSE = {
 }
 
 
+_TRACES_RESPONSE = {"items": [{"trace": {"id": "t1", "label": "POST /pay", "duration": 9,
+                                          "erroneous": True, "service": {"label": "be-payments"}}}]}
+
+
+def test_traces_erroneous_only_adds_erroneous_filter() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _TRACES_RESPONSE)
+    client.traces(service_name="be-payments", erroneous_only=True)
+    tfe = cap["body"]["tagFilterExpression"]
+    assert tfe["type"] == "EXPRESSION" and tfe["logicalOperator"] == "AND"
+    names = {e["name"] for e in tfe["elements"]}
+    assert names == {"service.name", "trace.erroneous"}
+
+
+def test_traces_default_is_single_service_filter() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _TRACES_RESPONSE)
+    client.traces(service_name="be-payments")
+    assert cap["body"]["tagFilterExpression"]["type"] == "TAG_FILTER"  # no erroneous AND
+
+
 def test_error_messages_unfiltered_body_and_parsing() -> None:
     cap: dict[str, Any] = {}
     client = _client_with_post(cap, _RESPONSE)

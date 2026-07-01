@@ -338,7 +338,8 @@ def instana_infrastructure_health(
     description=(
         "List the SLOWEST traces for a service (ordered by latency, descending) so the "
         "actual tail outliers are visible, not a random sample. Returns trace ids to drill "
-        "into with instana_get_trace_detail."
+        "into with instana_get_trace_detail. Set erroneous_only=true for error-rate incidents "
+        "to get the actual failing traces (default returns the slowest by latency)."
     ),
     use_cases=["Finding the slowest traces/endpoints and which trace to drill into"],
     requires=["service_name"],
@@ -352,16 +353,20 @@ def instana_traces(
     service_name: str,
     window_size_ms: int = 3_600_000,
     max_traces: int = 10,
+    erroneous_only: bool = False,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
     **_kwargs: Any,
 ) -> dict:
-    """Return the slowest traces (latency desc) for a service from Instana."""
+    """Return the slowest (or, with erroneous_only, the erroring) traces for a service."""
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         slowest = client.traces(
-            service_name=service_name, window_size_ms=window_size_ms, max_traces=max_traces
+            service_name=service_name,
+            window_size_ms=window_size_ms,
+            max_traces=max_traces,
+            erroneous_only=erroneous_only,
         )
         return {
             "source": "instana",

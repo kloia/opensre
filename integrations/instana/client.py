@@ -178,11 +178,26 @@ class InstanaClient:
         service_name: str,
         window_size_ms: int = 3_600_000,
         max_traces: int = 10,
+        erroneous_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return the slowest traces (latency desc) for a service from Instana."""
+        """Return traces for a service, ordered by latency DESC.
+
+        With ``erroneous_only`` the result is filtered to erroneous traces — use it for
+        error-rate investigations so drilling in shows actually-failing spans rather than
+        the slowest (often non-errored) ones. Default returns the slowest traces.
+        """
+        svc_filter = _service_filter(service_name)
+        if erroneous_only:
+            tag_filter: dict[str, Any] = {
+                "type": "EXPRESSION",
+                "logicalOperator": "AND",
+                "elements": [svc_filter, dict(self._ERRONEOUS_FILTER)],
+            }
+        else:
+            tag_filter = svc_filter
         body = {
             "timeFrame": {"windowSize": window_size_ms},
-            "tagFilterExpression": _service_filter(service_name),
+            "tagFilterExpression": tag_filter,
             "order": {"by": "latency", "direction": "DESC"},
             "pagination": {"retrievalSize": max_traces},
         }

@@ -10,6 +10,7 @@ from integrations.instana.tools import (
     instana_get_investigation_context,
     instana_get_trace_detail,
     instana_search_logs,
+    instana_traces,
 )
 from tests.tools.conftest import BaseToolContract
 
@@ -116,6 +117,15 @@ def test_get_events_include_changes_opt_in() -> None:
     ]
     result = instana_get_events(min_severity=5, include_changes=True, _client_override=fake)
     assert [e["eventId"] for e in result["events"]] == ["c1"]
+
+
+def test_instana_traces_passes_erroneous_only() -> None:
+    fake = MagicMock()
+    fake.traces.return_value = [{"trace_id": "t1", "erroneous": True}]
+    result = instana_traces(service_name="be-payments", erroneous_only=True, _client_override=fake)
+    assert result["available"] is True
+    _, kwargs = fake.traces.call_args
+    assert kwargs["erroneous_only"] is True
 
 
 def test_trace_detail_surfaces_error_counts() -> None:
