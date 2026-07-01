@@ -95,6 +95,29 @@ def test_get_events_happy_path() -> None:
     assert result["events"][0]["eventId"] == "e1"  # open + highest severity first
 
 
+def test_get_events_excludes_change_noise_by_default() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = [
+        {"eventId": "i1", "type": "issue", "severity": 10, "state": "open", "start": 3},
+        {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 2},
+        {"eventId": "i2", "type": "issue", "severity": 5, "state": "closed", "start": 1},
+    ]
+    result = instana_get_events(min_severity=5, _client_override=fake)
+    ids = [e["eventId"] for e in result["events"]]
+    assert "c1" not in ids            # change excluded even at high severity
+    assert ids == ["i1", "i2"]        # issues kept, open+severity ranked
+    assert result["totals"]["all"] == 3
+
+
+def test_get_events_include_changes_opt_in() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = [
+        {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 2},
+    ]
+    result = instana_get_events(min_severity=5, include_changes=True, _client_override=fake)
+    assert [e["eventId"] for e in result["events"]] == ["c1"]
+
+
 def test_trace_detail_surfaces_error_counts() -> None:
     fake = MagicMock()
     fake.get_trace_detail.return_value = [

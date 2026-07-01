@@ -107,6 +107,53 @@ def _severity(e: dict[str, Any]) -> int:
     return sv if isinstance(sv, int) else -99
 
 
+_NOISE_EVENT_TYPE = "change"
+
+
+def _rank_events(
+    events: list[dict[str, Any]],
+    *,
+    min_severity: int,
+    open_only: bool,
+    max_events: int,
+    include_changes: bool,
+) -> dict[str, Any]:
+    """Rank + compact Instana events for RCA, with totals.
+
+    Drops ``type == "change"`` infra noise unless ``include_changes``. Keeps events at
+    or above ``min_severity`` (and open-only when asked), ranked open-first then by
+    severity then recency. Returns the same shape the events tool exposes.
+    """
+    total = len(events)
+    open_count = sum(1 for e in events if e.get("state") == "open")
+    by_severity: dict[str, int] = {}
+    for e in events:
+        sv = str(e.get("severity"))
+        by_severity[sv] = by_severity.get(sv, 0) + 1
+    kept = [
+        e
+        for e in events
+        if _severity(e) >= min_severity
+        and (include_changes or e.get("type") != _NOISE_EVENT_TYPE)
+        and (not open_only or e.get("state") == "open")
+    ]
+    kept.sort(
+        key=lambda e: (e.get("state") == "open", _severity(e), e.get("start") or 0),
+        reverse=True,
+    )
+    shown = [_compact_event(e) for e in kept[:max_events]]
+    filt = f"severity>={min_severity}" + (", open-only" if open_only else ", open-first")
+    if not include_changes:
+        filt += ", excl-change"
+    return {
+        "totals": {"all": total, "open": open_count, "by_severity": by_severity},
+        "filter": filt,
+        "shown": len(shown),
+        "omitted": max(0, len(kept) - len(shown)),
+        "events": shown,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Ported tools
 # ---------------------------------------------------------------------------
@@ -119,8 +166,9 @@ def _severity(e: dict[str, Any]) -> int:
     description=(
         "List significant Instana events/incidents/issues in a window. Returns the highest "
         "severity / open events first (compact fields + eventId to drill into via "
-        "instana_get_event_detail), plus totals so nothing is silently dropped. Lower "
-        "min_severity or raise max_events to widen."
+        "instana_get_event_detail), plus totals so nothing is silently dropped. Infra "
+        "'change'-type events (host online/offline noise) are excluded by default; set "
+        "include_changes=true to include them. Lower min_severity or raise max_events to widen."
     ),
     use_cases=["Finding active incidents or issues affecting a service or entity"],
     requires=[],
@@ -135,6 +183,7 @@ def instana_get_events(
     min_severity: int = 5,
     max_events: int = 50,
     open_only: bool = False,
+    include_changes: bool = False,
     event_type_filters: list[str] | None = None,
     base_url: str = "",
     api_token: str = "",
@@ -147,36 +196,14 @@ def instana_get_events(
         events = client.get_events(
             window_size_ms=window_size_ms, event_type_filters=event_type_filters
         )
-        total = len(events)
-        open_count = sum(1 for e in events if e.get("state") == "open")
-        by_severity: dict[str, int] = {}
-        for e in events:
-            sv = str(e.get("severity"))
-            by_severity[sv] = by_severity.get(sv, 0) + 1
-        kept = [
-            e
-            for e in events
-            if _severity(e) >= min_severity and (not open_only or e.get("state") == "open")
-        ]
-        kept.sort(
-            key=lambda e: (
-                e.get("state") == "open",
-                _severity(e),
-                e.get("start") or 0,
-            ),
-            reverse=True,
+        ranked = _rank_events(
+            events,
+            min_severity=min_severity,
+            open_only=open_only,
+            max_events=max_events,
+            include_changes=include_changes,
         )
-        shown = [_compact_event(e) for e in kept[:max_events]]
-        return {
-            "source": "instana",
-            "available": True,
-            "totals": {"all": total, "open": open_count, "by_severity": by_severity},
-            "filter": f"severity>={min_severity}"
-            + (", open-only" if open_only else ", open-first"),
-            "shown": len(shown),
-            "omitted": max(0, len(kept) - len(shown)),
-            "events": shown,
-        }
+        return {"source": "instana", "available": True, **ranked}
     except Exception as exc:
         return {"source": "instana", "available": False, "error": _error(exc), "events": []}
 
