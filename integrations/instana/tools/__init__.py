@@ -570,13 +570,15 @@ def instana_get_investigation_context(
 
         def _events() -> list[dict[str, Any]]:
             raw = client.get_events(window_size_ms=window_size_ms)
-            return _rank_events(
+            ranked = _rank_events(
                 raw,
                 min_severity=1,
                 open_only=False,
                 max_events=max_events,
                 include_changes=False,
-            )["events"]
+            )
+            events_out: list[dict[str, Any]] = ranked["events"]
+            return events_out
 
         def _metrics() -> dict[str, Any]:
             return client.application_metrics(
