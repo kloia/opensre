@@ -66,6 +66,19 @@ def _error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _safe(fn: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """Call an error-facet client method, returning [] instead of raising.
+
+    Error analysis fans out over several call-groups facets (messages, http status,
+    endpoints). One facet failing — e.g. a tag a given tenant doesn't populate returns
+    HTTP 400 — must not blank the others, so each facet is isolated here.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return []
+
+
 def _extract_event_id(event_id: str, event_url: str) -> str:
     """Return the event id, parsing it from an Instana event URL if needed.
 
@@ -538,20 +551,33 @@ def instana_get_investigation_context(
                 max_traces=max_traces,
             )
 
-        def _error_messages() -> list[dict[str, Any]]:
-            return client.error_messages(
-                service_name=service_name, window_size_ms=window_size_ms, limit=max_traces
-            )
+        def _errors() -> dict[str, list[dict[str, Any]]]:
+            # Three RCA facets: exception messages (when apps emit them), HTTP status
+            # codes, and erroring endpoints (for status-code failures with no message).
+            return {
+                "error_messages": _safe(
+                    client.error_messages,
+                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                ),
+                "http_status": _safe(
+                    client.error_http_status,
+                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                ),
+                "error_endpoints": _safe(
+                    client.error_endpoints,
+                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                ),
+            }
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             fut_events = pool.submit(_events)
             fut_metrics = pool.submit(_metrics)
             fut_traces = pool.submit(_traces)
-            fut_errors = pool.submit(_error_messages)
+            fut_errors = pool.submit(_errors)
             events = fut_events.result()
             metrics = fut_metrics.result()
             traces = fut_traces.result()
-            error_messages = fut_errors.result()
+            errors = fut_errors.result()
 
         error_spans = [t for t in traces if t.get("erroneous")]
         return {
@@ -562,7 +588,9 @@ def instana_get_investigation_context(
             "metrics": metrics.get("metrics", metrics),
             "slowest_traces": traces,
             "error_spans": error_spans,
-            "error_messages": error_messages,
+            "error_messages": errors["error_messages"],
+            "http_status": errors["http_status"],
+            "error_endpoints": errors["error_endpoints"],
             "truncation_note": f"events<={max_events}, traces<={max_traces}",
         }
     except Exception as exc:
@@ -576,6 +604,8 @@ def instana_get_investigation_context(
             "slowest_traces": [],
             "error_spans": [],
             "error_messages": [],
+            "http_status": [],
+            "error_endpoints": [],
         }
 
 
@@ -587,14 +617,17 @@ def instana_get_investigation_context(
     tags=("errors", "exceptions", "rca"),
     cost_tier="moderate",
     description=(
-        "Return the actual error/exception messages Instana recorded for erroring calls, "
-        "ranked by occurrence count. With a service_name, returns that service's top error "
-        "messages (e.g. 'NOT_FOUND: National ID not found', Postgres '23505: duplicate key', "
-        "Mongo 'E11000 duplicate key'). Without one, also returns which services are erroring "
-        "most. This is the primary signal for naming the real cause of failures."
+        "Explain WHY a service is erroring. Returns three ranked facets for erroring calls: "
+        "exception messages (e.g. 'NOT_FOUND: National ID not found', Postgres '23505: "
+        "duplicate key'), HTTP status codes (e.g. 500), and the erroring endpoints (e.g. "
+        "'POST /payments'). Exception messages are empty for services that fail with a status "
+        "code and no message — the HTTP status + endpoint facets name the cause in that case. "
+        "Without a service_name, also returns which services are erroring most. The primary "
+        "signal for naming the real cause of failures."
     ),
     use_cases=[
-        "Finding the real exception text behind a service's errors",
+        "Finding the real exception text or HTTP status behind a service's errors",
+        "Naming the erroring endpoint (e.g. POST /payments returning 500)",
         "Ranking which services are erroring most across the system",
     ],
     requires=[],
@@ -621,21 +654,28 @@ def instana_error_analysis(
     _client_override: InstanaClient | None = None,
     **_kwargs: Any,
 ) -> dict:
-    """Return ranked real error messages (and, when unscoped, top erroring services)."""
+    """Return ranked error facets (messages, HTTP status, endpoints) + top erroring services."""
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         svc = service_name.strip() or None
-        messages = client.error_messages(
-            service_name=svc, window_size_ms=window_size_ms, limit=limit
+        # error_messages is the primary call: a hard failure (auth/connection) surfaces as
+        # available=False via the outer except. The enrichment facets are best-effort so a
+        # tenant-specific tag 400 can't blank the primary signal.
+        messages = client.error_messages(service_name=svc, window_size_ms=window_size_ms, limit=limit)
+        http_status = _safe(client.error_http_status, service_name=svc, window_size_ms=window_size_ms, limit=limit)
+        endpoints = _safe(client.error_endpoints, service_name=svc, window_size_ms=window_size_ms, limit=limit)
+        top_services = (
+            _safe(client.errors_by_service, window_size_ms=window_size_ms, limit=limit)
+            if svc is None
+            else []
         )
-        top_services: list[dict[str, Any]] = []
-        if svc is None:
-            top_services = client.errors_by_service(window_size_ms=window_size_ms, limit=limit)
         return {
             "source": "instana",
             "available": True,
             "service_name": svc,
             "error_messages": messages,
+            "http_status": http_status,
+            "error_endpoints": endpoints,
             "top_services": top_services,
         }
     except Exception as exc:
@@ -645,6 +685,8 @@ def instana_error_analysis(
             "error": _error(exc),
             "service_name": service_name.strip() or None,
             "error_messages": [],
+            "http_status": [],
+            "error_endpoints": [],
             "top_services": [],
         }
 

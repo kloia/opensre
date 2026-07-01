@@ -125,6 +125,8 @@ def test_investigation_context_bundles_signals() -> None:
         {"trace_id": "t2", "erroneous": False},
     ]
     fake.error_messages.return_value = [{"message": "boom", "count": 5}]
+    fake.error_http_status.return_value = [{"status": "500", "count": 9}]
+    fake.error_endpoints.return_value = [{"endpoint": "POST /pay", "count": 9}]
     result = instana_get_investigation_context(service_name="svc", _client_override=fake)
     assert result["available"] is True
     assert result["service_name"] == "svc"
@@ -133,6 +135,8 @@ def test_investigation_context_bundles_signals() -> None:
     assert len(result["slowest_traces"]) == 2
     assert result["error_spans"] == [{"trace_id": "t1", "erroneous": True}]
     assert result["error_messages"] == [{"message": "boom", "count": 5}]
+    assert result["http_status"] == [{"status": "500", "count": 9}]
+    assert result["error_endpoints"] == [{"endpoint": "POST /pay", "count": 9}]
     assert "truncation_note" in result
 
 
@@ -164,6 +168,8 @@ def test_error_analysis_happy_path() -> None:
         {"message": "NOT_FOUND: National ID not found", "count": 7702},
         {"message": "FAILED_PRECONDITION: dup", "count": 33},
     ]
+    fake.error_http_status.return_value = [{"status": "500", "count": 40}]
+    fake.error_endpoints.return_value = [{"endpoint": "POST /profile", "count": 40}]
     fake.errors_by_service.return_value = [
         {"service": "catalog", "count": 4498},
         {"service": "tiam-ms-profile", "count": 803},
@@ -172,15 +178,33 @@ def test_error_analysis_happy_path() -> None:
     assert result["available"] is True
     assert result["source"] == "instana"
     assert result["error_messages"][0]["count"] == 7702
-    # with a service_name, top_services is omitted or empty (focused on the service)
+    assert result["http_status"] == [{"status": "500", "count": 40}]
+    assert result["error_endpoints"] == [{"endpoint": "POST /profile", "count": 40}]
+    # with a service_name, top_services is empty (focused on the service)
     fake.error_messages.assert_called_once()
     assert result["top_services"] == []
     fake.errors_by_service.assert_not_called()
 
 
+def test_error_analysis_status_code_scenario_no_message() -> None:
+    # The lab scenario: injected 5xx -> erroneous traces but empty call.error.message.
+    # The HTTP status + endpoint facets must still name the cause.
+    fake = MagicMock()
+    fake.error_messages.return_value = []
+    fake.error_http_status.return_value = [{"status": "500", "count": 1873}]
+    fake.error_endpoints.return_value = [{"endpoint": "POST /payments", "count": 1873}]
+    result = instana_error_analysis(service_name="be-payments", _client_override=fake)
+    assert result["available"] is True
+    assert result["error_messages"] == []
+    assert result["http_status"][0] == {"status": "500", "count": 1873}
+    assert result["error_endpoints"][0] == {"endpoint": "POST /payments", "count": 1873}
+
+
 def test_error_analysis_no_service_returns_top_services() -> None:
     fake = MagicMock()
     fake.error_messages.return_value = []
+    fake.error_http_status.return_value = []
+    fake.error_endpoints.return_value = []
     fake.errors_by_service.return_value = [{"service": "catalog", "count": 4498}]
     result = instana_error_analysis(_client_override=fake)
     assert result["available"] is True
@@ -193,3 +217,5 @@ def test_error_analysis_graceful_unavailable() -> None:
     result = instana_error_analysis(service_name="svc", _client_override=fake)
     assert result["available"] is False
     assert result["error_messages"] == []
+    assert result["http_status"] == []
+    assert result["error_endpoints"] == []

@@ -215,12 +215,16 @@ class InstanaClient:
         window_size_ms: int,
         service_name: str | None,
         limit: int,
-        granularity_s: int = 3600,
     ) -> list[dict[str, Any]]:
         """POST analyze/call-groups grouped by a tag, filtered to erroneous calls.
 
         Returns the raw ``items`` list (each ``{"name", "metrics", ...}``). A0-validated
         endpoint: ``/api/application-monitoring/analyze/call-groups`` (NOT ``analyze/calls``).
+
+        No ``granularity`` is sent: Instana rejects call-groups with 412 when the metric
+        granularity is >= the window (the default 1h window + a 3600s granularity trips
+        this). Omitting it lets Instana auto-roll the series; ``_sum_series`` totals
+        whatever buckets come back regardless of the metric key.
         """
         if service_name:
             tag_filter: dict[str, Any] = {
@@ -237,12 +241,30 @@ class InstanaClient:
             "timeFrame": {"windowSize": window_size_ms},
             "tagFilterExpression": tag_filter,
             "group": {"groupbyTag": groupby_tag},
-            "metrics": [{"metric": "calls", "aggregation": "SUM", "granularity": granularity_s}],
+            "metrics": [{"metric": "calls", "aggregation": "SUM"}],
             "pagination": {"retrievalSize": limit},
         }
         resp = self.post("/api/application-monitoring/analyze/call-groups", json=body)
         items = resp.get("items", []) if isinstance(resp, dict) else []
         return items if isinstance(items, list) else []
+
+    def _grouped_error_counts(
+        self,
+        groupby_tag: str,
+        key: str,
+        fallback: str,
+        service_name: str | None,
+        window_size_ms: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Group erroneous calls by a tag and return ``[{<key>: name, "count": n}]`` ranked desc."""
+        items = self._call_groups(groupby_tag, window_size_ms, service_name, limit)
+        out = [
+            {key: (it.get("name") or fallback), "count": _sum_series(it.get("metrics", {}))}
+            for it in items
+        ]
+        out.sort(key=lambda r: r["count"], reverse=True)
+        return out
 
     def error_messages(
         self,
@@ -252,16 +274,39 @@ class InstanaClient:
     ) -> list[dict[str, Any]]:
         """Return ranked real error messages (``call.error.message``) with occurrence counts.
 
-        This is the primary RCA signal: the actual exception strings (Postgres/Mongo/app
-        errors), not just an error count. Ranked by total occurrences, descending.
+        The strongest RCA signal when present: actual exception strings (Postgres/Mongo/app
+        errors). Empty for services whose errors are HTTP status codes without an exception
+        message (see ``error_http_status`` / ``error_endpoints``). Ranked by occurrences.
         """
-        items = self._call_groups("call.error.message", window_size_ms, service_name, limit)
-        out = [
-            {"message": (it.get("name") or "(no message)"), "count": _sum_series(it.get("metrics", {}))}
-            for it in items
-        ]
-        out.sort(key=lambda r: r["count"], reverse=True)
-        return out
+        return self._grouped_error_counts(
+            "call.error.message", "message", "(no message)", service_name, window_size_ms, limit
+        )
+
+    def error_http_status(
+        self,
+        service_name: str | None = None,
+        window_size_ms: int = 3_600_000,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Return the HTTP status codes (``call.http.status``) of erroneous calls, ranked.
+
+        The RCA signal for status-code failures (e.g. a service returning 500) that carry no
+        exception message. Ranked by occurrences, descending.
+        """
+        return self._grouped_error_counts(
+            "call.http.status", "status", "(none)", service_name, window_size_ms, limit
+        )
+
+    def error_endpoints(
+        self,
+        service_name: str | None = None,
+        window_size_ms: int = 3_600_000,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Return which endpoints (``call.name``) are erroring, ranked by occurrences."""
+        return self._grouped_error_counts(
+            "call.name", "endpoint", "(unknown)", service_name, window_size_ms, limit
+        )
 
     def errors_by_service(
         self,
@@ -269,13 +314,9 @@ class InstanaClient:
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Return which services are erroring (``service.name``) with occurrence counts, ranked."""
-        items = self._call_groups("service.name", window_size_ms, None, limit)
-        out = [
-            {"service": (it.get("name") or "(unknown)"), "count": _sum_series(it.get("metrics", {}))}
-            for it in items
-        ]
-        out.sort(key=lambda r: r["count"], reverse=True)
-        return out
+        return self._grouped_error_counts(
+            "service.name", "service", "(unknown)", None, window_size_ms, limit
+        )
 
     def get_trace_detail(
         self,

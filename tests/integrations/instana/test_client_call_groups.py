@@ -49,6 +49,32 @@ def test_error_messages_unfiltered_body_and_parsing() -> None:
     assert out[2]["message"] == "(no message)"
 
 
+def test_call_groups_omits_granularity() -> None:
+    # Regression: Instana returns 412 when the metric granularity >= the window
+    # (default 1h window + 3600s granularity). The body must send NO granularity.
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    client.error_messages(window_size_ms=3_600_000, limit=5)
+    metrics = cap["body"]["metrics"]
+    assert metrics == [{"metric": "calls", "aggregation": "SUM"}]
+    assert "granularity" not in metrics[0]
+
+
+def test_error_http_status_and_endpoints_facets() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+
+    status = client.error_http_status(service_name="be-payments", window_size_ms=6_000)
+    assert cap["body"]["group"]["groupbyTag"] == "call.http.status"
+    assert status[0]["status"] == "NOT_FOUND: National ID not found"  # from _RESPONSE names
+    assert status[0]["count"] == 7702
+
+    endpoints = client.error_endpoints(service_name="be-payments", window_size_ms=6_000)
+    assert cap["body"]["group"]["groupbyTag"] == "call.name"
+    assert endpoints[0]["endpoint"] == "NOT_FOUND: National ID not found"
+    assert "count" in endpoints[0]
+
+
 def test_error_messages_with_service_filter_uses_AND_expression() -> None:
     cap: dict[str, Any] = {}
     client = _client_with_post(cap, _RESPONSE)
