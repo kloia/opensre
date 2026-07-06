@@ -247,28 +247,31 @@ class InstanaClient:
         service_name: str | None,
         limit: int,
         to_ms: int | None = None,
+        extra_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """POST analyze/call-groups grouped by a tag, filtered to erroneous calls.
 
         Returns the raw ``items`` list (each ``{"name", "metrics", ...}``). A0-validated
         endpoint: ``/api/application-monitoring/analyze/call-groups`` (NOT ``analyze/calls``).
 
+        Always AND-ed with ``trace.erroneous``; ``service_name`` and ``extra_filter`` (e.g.
+        an ``application.name`` scope) add further AND elements when given.
+
         No ``granularity`` is sent: Instana rejects call-groups with 412 when the metric
         granularity is >= the window (the default 1h window + a 3600s granularity trips
         this). Omitting it lets Instana auto-roll the series; ``_sum_series`` totals
         whatever buckets come back regardless of the metric key.
         """
+        elements: list[dict[str, Any]] = [dict(self._ERRONEOUS_FILTER)]
         if service_name:
-            tag_filter: dict[str, Any] = {
-                "type": "EXPRESSION",
-                "logicalOperator": "AND",
-                "elements": [
-                    self._ERRONEOUS_FILTER,
-                    _service_filter(service_name),
-                ],
-            }
-        else:
-            tag_filter = dict(self._ERRONEOUS_FILTER)
+            elements.append(_service_filter(service_name))
+        if extra_filter:
+            elements.append(extra_filter)
+        tag_filter: dict[str, Any] = (
+            elements[0]
+            if len(elements) == 1
+            else {"type": "EXPRESSION", "logicalOperator": "AND", "elements": elements}
+        )
         body = {
             "timeFrame": _timeframe(window_size_ms, to_ms),
             "tagFilterExpression": tag_filter,
@@ -289,9 +292,12 @@ class InstanaClient:
         window_size_ms: int,
         limit: int,
         to_ms: int | None = None,
+        extra_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Group erroneous calls by a tag and return ``[{<key>: name, "count": n}]`` ranked desc."""
-        items = self._call_groups(groupby_tag, window_size_ms, service_name, limit, to_ms=to_ms)
+        items = self._call_groups(
+            groupby_tag, window_size_ms, service_name, limit, to_ms=to_ms, extra_filter=extra_filter
+        )
         out = [
             {key: (it.get("name") or fallback), "count": _sum_series(it.get("metrics", {}))}
             for it in items
@@ -370,25 +376,17 @@ class InstanaClient:
         + which member services are erroring most (application-scoped, time-anchored)."""
         apps = self.get("/api/application-monitoring/applications", params={"nameFilter": application_name, "pageSize": 20})
         items = apps.get("items", []) if isinstance(apps, dict) else (apps if isinstance(apps, list) else [])
-        match = next((a for a in items if (a.get("label") or "").strip() == application_name.strip()), (items[0] if items else None))
+        # Exact label match only — never guess an unrelated application id.
+        match = next((a for a in items if (a.get("label") or "").strip() == application_name.strip()), None)
         app_id = (match or {}).get("id")
-        # Top-erroring member services within this application boundary.
-        tag_filter: dict[str, Any] = {
-            "type": "EXPRESSION", "logicalOperator": "AND",
-            "elements": [dict(self._ERRONEOUS_FILTER),
-                         {"type": "TAG_FILTER", "name": "application.name", "operator": "EQUALS", "value": application_name}],
-        }
-        body = {
-            "timeFrame": _timeframe(window_size_ms, to_ms),
-            "tagFilterExpression": tag_filter,
-            "group": {"groupbyTag": "service.name"},
-            "metrics": [{"metric": "calls", "aggregation": "SUM"}],
-            "pagination": {"retrievalSize": limit},
-        }
-        resp = self.post("/api/application-monitoring/analyze/call-groups", json=body)
-        rows = resp.get("items", []) if isinstance(resp, dict) else []
-        top = [{"service": (r.get("name") or "(unknown)"), "count": _sum_series(r.get("metrics", {}))} for r in rows]
-        top.sort(key=lambda r: r["count"], reverse=True)
+        # Top-erroring member services within this application boundary (reuses the shared
+        # erroneous call-groups path; application.name scope added as an extra AND filter).
+        top = self._grouped_error_counts(
+            "service.name", "service", "(unknown)", None, window_size_ms, limit,
+            to_ms=to_ms,
+            extra_filter={"type": "TAG_FILTER", "name": "application.name",
+                          "operator": "EQUALS", "value": application_name},
+        )
         return {"application": application_name, "application_id": app_id, "top_error_services": top}
 
     def get_trace_detail(

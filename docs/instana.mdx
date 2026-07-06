@@ -23,7 +23,8 @@ errors.
 | `instana_resolve_aws_resource` | Map an Instana AWS entity (snapshotId) to its AWS account/region/ARN. |
 | `instana_search_logs` | Search Instana logs (requires Instana Log Management; returns unavailable on APM-only tenants). |
 
-All query tools accept an optional `to_ms` (epoch milliseconds) to anchor the
+The Instana query tools (events, application metrics, traces, error analysis,
+investigation context, application context) accept an optional `to_ms` (epoch milliseconds) to anchor the
 lookback window to the event's end time instead of "now" — pass it to
 investigate a past/closed incident within the window it actually occurred in. Without
 `to_ms` the window ends at the current time.

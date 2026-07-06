@@ -153,6 +153,22 @@ def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None
     out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5)
     assert out["application_id"] == "APPID1"
     assert any(s["service"] == "be-payments" for s in out["top_error_services"])
-    # error grouping was application-scoped + time-anchored
+    # error grouping was application-scoped + time-anchored, grouped by service.name
     body = calls["posts"][-1][1]
     assert body["timeFrame"] == {"to": 999, "windowSize": 6_000}
+    assert body["group"]["groupbyTag"] == "service.name"
+    tfe = body["tagFilterExpression"]
+    assert tfe["type"] == "EXPRESSION" and tfe["logicalOperator"] == "AND"
+    names = {e["name"] for e in tfe["elements"]}
+    assert names == {"trace.erroneous", "application.name"}
+
+
+def test_application_context_no_match_returns_null_id() -> None:
+    client = InstanaClient(InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"}))
+    def fake_get(path, params=None): return {"items": [{"id": "OTHER", "label": "Some Other App"}]}
+    def fake_post(path, json=None): return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 3.0]]}}]}
+    client.get = fake_get  # type: ignore[method-assign]
+    client.post = fake_post  # type: ignore[method-assign]
+    out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000)
+    assert out["application_id"] is None                 # no exact match → no guessed id
+    assert out["top_error_services"][0]["service"] == "be-payments"  # ranking still scoped by name

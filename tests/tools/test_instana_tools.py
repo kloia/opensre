@@ -316,3 +316,22 @@ def test_application_context_tool_happy_and_graceful() -> None:
     fake2 = MagicMock(); fake2.application_context.side_effect = RuntimeError("400 bad app")
     r2 = instana_get_application_context(application="App", _client_override=fake2)
     assert r2["available"] is False
+
+
+def test_get_events_tool_forwards_to_ms() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = []
+    instana_get_events(to_ms=777, _client_override=fake)
+    assert fake.get_events.call_args.kwargs.get("to_ms") == 777
+
+
+def test_error_analysis_tool_forwards_to_ms() -> None:
+    fake = MagicMock()
+    fake.error_messages.return_value = []
+    fake.error_http_status.return_value = []
+    fake.error_endpoints.return_value = []
+    fake.errors_by_service.return_value = []
+    instana_error_analysis(service_name="svc", to_ms=777, _client_override=fake)
+    assert fake.error_messages.call_args.kwargs.get("to_ms") == 777
+    assert fake.error_http_status.call_args.kwargs.get("to_ms") == 777
+    assert fake.error_endpoints.call_args.kwargs.get("to_ms") == 777
