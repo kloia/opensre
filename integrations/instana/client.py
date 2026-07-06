@@ -44,6 +44,14 @@ def _summarize_series(series: list[Any]) -> dict[str, Any]:
     }
 
 
+def _timeframe(window_size_ms: int, to_ms: int | None) -> dict[str, Any]:
+    """Instana timeFrame — anchored to `to_ms` (event end) when given, else window ends at now."""
+    tf: dict[str, Any] = {"windowSize": window_size_ms}
+    if to_ms is not None:
+        tf["to"] = to_ms
+    return tf
+
+
 def _sum_series(metrics: dict[str, Any]) -> int:
     """Sum every value across all metric series in a call-groups item."""
     total = 0.0
@@ -125,9 +133,12 @@ class InstanaClient:
         self,
         window_size_ms: int = 3_600_000,
         event_type_filters: list[str] | None = None,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return the raw list of Instana events in a window."""
         params: dict[str, Any] = {"windowSize": window_size_ms}
+        if to_ms is not None:
+            params["to"] = to_ms
         if event_type_filters:
             params["eventTypeFilters"] = event_type_filters
         events = self.get("/api/events", params=params)
@@ -143,6 +154,7 @@ class InstanaClient:
         service_name: str | None = None,
         window_size_ms: int = 3_600_000,
         granularity_s: int = 60,
+        to_ms: int | None = None,
     ) -> dict[str, Any]:
         """Return application golden-signal metrics (v2 API) as magnitude+trend summaries."""
         body: dict[str, Any] = {
@@ -152,7 +164,7 @@ class InstanaClient:
                 {"metric": "errors", "aggregation": "MEAN", "granularity": granularity_s},
                 {"metric": "calls", "aggregation": "SUM", "granularity": granularity_s},
             ],
-            "timeFrame": {"windowSize": window_size_ms},
+            "timeFrame": _timeframe(window_size_ms, to_ms),
         }
         if service_name:
             body["tagFilterExpression"] = _service_filter(service_name)
@@ -168,9 +180,12 @@ class InstanaClient:
         self,
         query: str,
         window_size_ms: int = 3_600_000,
+        to_ms: int | None = None,
     ) -> Any:
         """Return infrastructure entities matching a query."""
-        params = {"query": query, "windowSize": window_size_ms}
+        params: dict[str, Any] = {"query": query, "windowSize": window_size_ms}
+        if to_ms is not None:
+            params["to"] = to_ms
         return self.get("/api/infrastructure-monitoring/snapshots", params=params)
 
     def traces(
@@ -179,6 +194,7 @@ class InstanaClient:
         window_size_ms: int = 3_600_000,
         max_traces: int = 10,
         erroneous_only: bool = False,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return traces for a service, ordered by latency DESC.
 
@@ -196,7 +212,7 @@ class InstanaClient:
         else:
             tag_filter = svc_filter
         body = {
-            "timeFrame": {"windowSize": window_size_ms},
+            "timeFrame": _timeframe(window_size_ms, to_ms),
             "tagFilterExpression": tag_filter,
             "order": {"by": "latency", "direction": "DESC"},
             "pagination": {"retrievalSize": max_traces},
@@ -230,6 +246,7 @@ class InstanaClient:
         window_size_ms: int,
         service_name: str | None,
         limit: int,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """POST analyze/call-groups grouped by a tag, filtered to erroneous calls.
 
@@ -253,7 +270,7 @@ class InstanaClient:
         else:
             tag_filter = dict(self._ERRONEOUS_FILTER)
         body = {
-            "timeFrame": {"windowSize": window_size_ms},
+            "timeFrame": _timeframe(window_size_ms, to_ms),
             "tagFilterExpression": tag_filter,
             "group": {"groupbyTag": groupby_tag},
             "metrics": [{"metric": "calls", "aggregation": "SUM"}],
@@ -271,9 +288,10 @@ class InstanaClient:
         service_name: str | None,
         window_size_ms: int,
         limit: int,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Group erroneous calls by a tag and return ``[{<key>: name, "count": n}]`` ranked desc."""
-        items = self._call_groups(groupby_tag, window_size_ms, service_name, limit)
+        items = self._call_groups(groupby_tag, window_size_ms, service_name, limit, to_ms=to_ms)
         out = [
             {key: (it.get("name") or fallback), "count": _sum_series(it.get("metrics", {}))}
             for it in items
@@ -286,6 +304,7 @@ class InstanaClient:
         service_name: str | None = None,
         window_size_ms: int = 3_600_000,
         limit: int = 10,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return ranked real error messages (``call.error.message``) with occurrence counts.
 
@@ -294,7 +313,8 @@ class InstanaClient:
         message (see ``error_http_status`` / ``error_endpoints``). Ranked by occurrences.
         """
         return self._grouped_error_counts(
-            "call.error.message", "message", "(no message)", service_name, window_size_ms, limit
+            "call.error.message", "message", "(no message)", service_name, window_size_ms, limit,
+            to_ms=to_ms,
         )
 
     def error_http_status(
@@ -302,6 +322,7 @@ class InstanaClient:
         service_name: str | None = None,
         window_size_ms: int = 3_600_000,
         limit: int = 10,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return the HTTP status codes (``call.http.status``) of erroneous calls, ranked.
 
@@ -309,7 +330,8 @@ class InstanaClient:
         exception message. Ranked by occurrences, descending.
         """
         return self._grouped_error_counts(
-            "call.http.status", "status", "(none)", service_name, window_size_ms, limit
+            "call.http.status", "status", "(none)", service_name, window_size_ms, limit,
+            to_ms=to_ms,
         )
 
     def error_endpoints(
@@ -317,20 +339,24 @@ class InstanaClient:
         service_name: str | None = None,
         window_size_ms: int = 3_600_000,
         limit: int = 10,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return which endpoints (``call.name``) are erroring, ranked by occurrences."""
         return self._grouped_error_counts(
-            "call.name", "endpoint", "(unknown)", service_name, window_size_ms, limit
+            "call.name", "endpoint", "(unknown)", service_name, window_size_ms, limit,
+            to_ms=to_ms,
         )
 
     def errors_by_service(
         self,
         window_size_ms: int = 3_600_000,
         limit: int = 10,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return which services are erroring (``service.name``) with occurrence counts, ranked."""
         return self._grouped_error_counts(
-            "service.name", "service", "(unknown)", None, window_size_ms, limit
+            "service.name", "service", "(unknown)", None, window_size_ms, limit,
+            to_ms=to_ms,
         )
 
     def get_trace_detail(
@@ -351,6 +377,7 @@ class InstanaClient:
         service_name: str = "",
         window_size_ms: int = 3_600_000,
         limit: int = 50,
+        to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Search Instana logs by query/service within a time window.
 
@@ -362,7 +389,7 @@ class InstanaClient:
         graceful-unavailable path.
         """
         body: dict[str, Any] = {
-            "timeFrame": {"windowSize": window_size_ms},
+            "timeFrame": _timeframe(window_size_ms, to_ms),
             "pagination": {"retrievalSize": limit},
         }
         if query:

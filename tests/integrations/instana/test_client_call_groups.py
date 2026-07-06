@@ -116,3 +116,25 @@ def test_errors_by_service_groups_by_service_name() -> None:
     assert cap["body"]["group"]["groupbyTag"] == "service.name"
     assert out[0]["count"] == 7702  # ranked desc, summed
     assert "service" in out[0]
+
+
+def test_call_groups_includes_to_when_set() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    client.error_messages(window_size_ms=6_000, limit=5, to_ms=1782983492003)
+    tf = cap["body"]["timeFrame"]
+    assert tf == {"to": 1782983492003, "windowSize": 6_000}
+
+
+def test_call_groups_omits_to_when_none() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _RESPONSE)
+    client.error_messages(window_size_ms=6_000, limit=5)
+    assert "to" not in cap["body"]["timeFrame"]
+
+
+def test_traces_includes_to_when_set() -> None:
+    cap: dict[str, Any] = {}
+    client = _client_with_post(cap, _TRACES_RESPONSE)
+    client.traces(service_name="be-payments", window_size_ms=6_000, to_ms=1782983492003)
+    assert cap["body"]["timeFrame"] == {"to": 1782983492003, "windowSize": 6_000}
