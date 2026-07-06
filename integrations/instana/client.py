@@ -359,6 +359,38 @@ class InstanaClient:
             to_ms=to_ms,
         )
 
+    def application_context(
+        self,
+        application_name: str,
+        window_size_ms: int = 3_600_000,
+        to_ms: int | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Resolve an Instana Application Perspective by name and return its member services
+        + which member services are erroring most (application-scoped, time-anchored)."""
+        apps = self.get("/api/application-monitoring/applications", params={"nameFilter": application_name, "pageSize": 20})
+        items = apps.get("items", []) if isinstance(apps, dict) else (apps if isinstance(apps, list) else [])
+        match = next((a for a in items if (a.get("label") or "").strip() == application_name.strip()), (items[0] if items else None))
+        app_id = (match or {}).get("id")
+        # Top-erroring member services within this application boundary.
+        tag_filter: dict[str, Any] = {
+            "type": "EXPRESSION", "logicalOperator": "AND",
+            "elements": [dict(self._ERRONEOUS_FILTER),
+                         {"type": "TAG_FILTER", "name": "application.name", "operator": "EQUALS", "value": application_name}],
+        }
+        body = {
+            "timeFrame": _timeframe(window_size_ms, to_ms),
+            "tagFilterExpression": tag_filter,
+            "group": {"groupbyTag": "service.name"},
+            "metrics": [{"metric": "calls", "aggregation": "SUM"}],
+            "pagination": {"retrievalSize": limit},
+        }
+        resp = self.post("/api/application-monitoring/analyze/call-groups", json=body)
+        rows = resp.get("items", []) if isinstance(resp, dict) else []
+        top = [{"service": (r.get("name") or "(unknown)"), "count": _sum_series(r.get("metrics", {}))} for r in rows]
+        top.sort(key=lambda r: r["count"], reverse=True)
+        return {"application": application_name, "application_id": app_id, "top_error_services": top}
+
     def get_trace_detail(
         self,
         trace_id: str,

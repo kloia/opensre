@@ -747,6 +747,57 @@ def instana_error_analysis(
 
 
 @tool(
+    name="instana_get_application_context",
+    display_name="Instana application context",
+    source="instana",
+    evidence_type="topology",
+    tags=("application", "services", "rca"),
+    cost_tier="moderate",
+    description=(
+        "For an Instana Application Perspective alert (entity_type=application), resolve the "
+        "application by name to its member services and which of them are erroring most. Call "
+        "this FIRST for application-scoped alerts, then drill into the returned services with "
+        "instana_get_investigation_context / instana_error_analysis. Do NOT pass an application "
+        "name as service_name to the service tools."
+    ),
+    use_cases=["Finding the real member services behind an Instana application-perspective alert"],
+    requires=["application"],
+    input_schema={
+        "type": "object",
+        "properties": {
+            "application": {"type": "string"},
+            "window_size_ms": {"type": "integer", "default": 3_600_000},
+            "to_ms": {"type": "integer"},
+            "limit": {"type": "integer", "default": 10},
+        },
+        "required": ["application"],
+    },
+    side_effect_level="read_only",
+    injected_params=_INJECTED,
+    is_available=_instana_available,
+    extract_params=_instana_extract_params,
+)
+def instana_get_application_context(
+    application: str,
+    window_size_ms: int = 3_600_000,
+    to_ms: int | None = None,
+    limit: int = 10,
+    base_url: str = "",
+    api_token: str = "",
+    _client_override: InstanaClient | None = None,
+    **_kwargs: Any,
+) -> dict:
+    """Resolve an Instana Application Perspective → member services + top erroring services."""
+    try:
+        client = _resolve_client(base_url, api_token, _client_override)
+        out = client.application_context(application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit)
+        return {"source": "instana", "available": True, **out}
+    except Exception as exc:
+        return {"source": "instana", "available": False, "error": _error(exc),
+                "application": application, "top_error_services": []}
+
+
+@tool(
     name="instana_search_logs",
     display_name="Instana logs",
     source="instana",

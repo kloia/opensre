@@ -138,3 +138,21 @@ def test_traces_includes_to_when_set() -> None:
     client = _client_with_post(cap, _TRACES_RESPONSE)
     client.traces(service_name="be-payments", window_size_ms=6_000, to_ms=1782983492003)
     assert cap["body"]["timeFrame"] == {"to": 1782983492003, "windowSize": 6_000}
+
+
+_APPS_RESPONSE = {"items": [{"id": "APPID1", "label": "ITSM Platform Lab Environment"}]}
+
+
+def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None:
+    client = InstanaClient(InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"}))
+    calls: dict[str, Any] = {}
+    def fake_get(path, params=None): calls["get"] = (path, params); return _APPS_RESPONSE
+    def fake_post(path, json=None): calls.setdefault("posts", []).append((path, json)); return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 5.0]]}}]}
+    client.get = fake_get  # type: ignore[method-assign]
+    client.post = fake_post  # type: ignore[method-assign]
+    out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5)
+    assert out["application_id"] == "APPID1"
+    assert any(s["service"] == "be-payments" for s in out["top_error_services"])
+    # error grouping was application-scoped + time-anchored
+    body = calls["posts"][-1][1]
+    assert body["timeFrame"] == {"to": 999, "windowSize": 6_000}

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from integrations.instana.tools import (
     instana_error_analysis,
+    instana_get_application_context,
     instana_get_events,
     instana_get_investigation_context,
     instana_get_trace_detail,
@@ -302,3 +303,16 @@ def test_traces_tool_passes_to_ms() -> None:
     fake.traces.return_value = []
     instana_traces(service_name="svc", to_ms=123, _client_override=fake)
     assert fake.traces.call_args.kwargs.get("to_ms") == 123
+
+
+def test_application_context_tool_happy_and_graceful() -> None:
+    fake = MagicMock()
+    fake.application_context.return_value = {"application": "App", "application_id": "APPID1",
+        "top_error_services": [{"service": "be-payments", "count": 42}]}
+    r = instana_get_application_context(application="App", to_ms=999, _client_override=fake)
+    assert r["available"] is True
+    assert r["top_error_services"][0]["service"] == "be-payments"
+    assert fake.application_context.call_args.kwargs.get("to_ms") == 999
+    fake2 = MagicMock(); fake2.application_context.side_effect = RuntimeError("400 bad app")
+    r2 = instana_get_application_context(application="App", _client_override=fake2)
+    assert r2["available"] is False
