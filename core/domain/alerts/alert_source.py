@@ -10,6 +10,7 @@ from typing import Any
 ALERT_SOURCE_TO_TOOL_SOURCES: dict[str, tuple[str, ...]] = {
     "grafana": ("grafana",),
     "datadog": ("datadog",),
+    "instana": ("instana",),
     "cloudwatch": ("cloudwatch", "ec2", "rds", "cloudtrail"),
     "eks": ("eks", "ec2", "cloudtrail"),
     "alertmanager": ("eks", "cloudwatch", "grafana", "cloudtrail"),
@@ -49,6 +50,7 @@ ALERT_SOURCE_TO_TOOL_SOURCES: dict[str, tuple[str, ...]] = {
 ALERT_SOURCE_TO_SEED_TOOL_SOURCES: dict[str, tuple[str, ...]] = {
     "grafana": ("grafana",),
     "datadog": ("datadog",),
+    "instana": ("instana",),
     "cloudwatch": ("cloudwatch",),
     "eks": ("eks",),
     "alertmanager": ("grafana", "cloudwatch"),
@@ -87,6 +89,7 @@ DB_KEYWORDS: tuple[str, ...] = ("database", "db connection", "connection pool")
 
 SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
     "datadog": ("datadog", "datadoghq", "dd monitor"),
+    "instana": ("instana", "smart alert", "application perspective"),
     "sentry": ("sentry", "exception", "stack trace", "stacktrace", "error tracking"),
     "vercel": ("vercel", "deploy", "deployment", "build failed"),
     "github": ("github", "commit", "pull request", "merge"),
