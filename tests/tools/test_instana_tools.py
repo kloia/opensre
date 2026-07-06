@@ -308,14 +308,17 @@ def test_traces_tool_passes_to_ms() -> None:
 def test_application_context_tool_happy_and_graceful() -> None:
     fake = MagicMock()
     fake.application_context.return_value = {"application": "App", "application_id": "APPID1",
+        "services": [{"service": "fe", "count": 100}],
         "top_error_services": [{"service": "be-payments", "count": 42}]}
     r = instana_get_application_context(application="App", to_ms=999, _client_override=fake)
     assert r["available"] is True
+    assert r["services"][0]["service"] == "fe"                     # member services surfaced
     assert r["top_error_services"][0]["service"] == "be-payments"
     assert fake.application_context.call_args.kwargs.get("to_ms") == 999
     fake2 = MagicMock(); fake2.application_context.side_effect = RuntimeError("400 bad app")
     r2 = instana_get_application_context(application="App", _client_override=fake2)
     assert r2["available"] is False
+    assert r2["services"] == [] and r2["top_error_services"] == []
 
 
 def test_get_events_tool_forwards_to_ms() -> None:

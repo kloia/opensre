@@ -153,14 +153,16 @@ def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None
     out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5)
     assert out["application_id"] == "APPID1"
     assert any(s["service"] == "be-payments" for s in out["top_error_services"])
-    # error grouping was application-scoped + time-anchored, grouped by service.name
-    body = calls["posts"][-1][1]
-    assert body["timeFrame"] == {"to": 999, "windowSize": 6_000}
-    assert body["group"]["groupbyTag"] == "service.name"
-    tfe = body["tagFilterExpression"]
-    assert tfe["type"] == "EXPRESSION" and tfe["logicalOperator"] == "AND"
-    names = {e["name"] for e in tfe["elements"]}
-    assert names == {"trace.erroneous", "application.name"}
+    assert any(s["service"] == "be-payments" for s in out["services"])  # member services present
+    # two call-groups posts: [0] member services (no erroneous), [1] erroneous-scoped
+    members_body, errors_body = calls["posts"][0][1], calls["posts"][1][1]
+    assert members_body["timeFrame"] == {"to": 999, "windowSize": 6_000}
+    assert members_body["group"]["groupbyTag"] == "service.name"
+    # member-services query is scoped to application.name only (no trace.erroneous)
+    assert members_body["tagFilterExpression"] == {"type": "TAG_FILTER", "name": "application.name", "operator": "EQUALS", "value": "ITSM Platform Lab Environment"}
+    # erroneous query ANDs trace.erroneous + application.name
+    tfe = errors_body["tagFilterExpression"]
+    assert tfe["type"] == "EXPRESSION" and {e["name"] for e in tfe["elements"]} == {"trace.erroneous", "application.name"}
 
 
 def test_application_context_no_match_returns_null_id() -> None:

@@ -794,7 +794,7 @@ def instana_get_application_context(
         return {"source": "instana", "available": True, **out}
     except Exception as exc:
         return {"source": "instana", "available": False, "error": _error(exc),
-                "application": application, "top_error_services": []}
+                "application": application, "services": [], "top_error_services": []}
 
 
 @tool(
