@@ -218,3 +218,39 @@ def resolve_alert_source(state: dict[str, Any]) -> str:
         if isinstance(ext_url, str) and "grafana" in ext_url.lower():
             return "grafana"
     return ""
+
+
+# Instana entity_type -> the single primary tool to seed before the LLM loop.
+# Application-Perspective alerts must resolve member services first; service
+# alerts get the one-shot RCA bundle; host/infra alerts get infrastructure health.
+INSTANA_ENTITY_SEED_TOOL: dict[str, str] = {
+    "application": "instana_get_application_context",
+    "service": "instana_get_investigation_context",
+    "host": "instana_infrastructure_health",
+    "infrastructure": "instana_infrastructure_health",
+}
+INSTANA_DEFAULT_SEED_TOOL: str = "instana_get_investigation_context"
+
+
+def _instana_entity_type(state: dict[str, Any]) -> str:
+    """Return the alert's Instana entity_type (lowercased), or "" when absent."""
+    raw = state.get("raw_alert")
+    if isinstance(raw, dict):
+        return str(raw.get("entity_type") or "").lower().strip()
+    return ""
+
+
+def select_seed_tool_names(state: dict[str, Any], source: str) -> list[str] | None:
+    """Return specific seed tool name(s) for a source, or None to seed all its tools.
+
+    Instana seeds exactly ONE primary tool chosen by the alert's entity_type
+    (avoiding the 11-tool fan-out, several of which need a service_name we don't
+    have yet). Every other source returns None, preserving the "seed all source
+    tools" behavior the caller applies today.
+    """
+    if source == "instana":
+        tool = INSTANA_ENTITY_SEED_TOOL.get(
+            _instana_entity_type(state), INSTANA_DEFAULT_SEED_TOOL
+        )
+        return [tool]
+    return None
