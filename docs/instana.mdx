@@ -19,8 +19,25 @@ errors.
 | `instana_get_trace_detail` | Spans of one trace, ranked by duration, with downstream service/endpoint and error count. |
 | `instana_error_analysis` | The real exception messages behind a service's errors, ranked by count (and which services error most). |
 | `instana_get_investigation_context` | One-shot RCA bundle: events + metrics + slowest traces + top error messages. |
+| `instana_get_application_context` | Resolve an Instana Application Perspective by name to its member services and which of them are erroring most. Call this first for application-scoped alerts, then drill into the returned services. |
 | `instana_resolve_aws_resource` | Map an Instana AWS entity (snapshotId) to its AWS account/region/ARN. |
 | `instana_search_logs` | Search Instana logs (requires Instana Log Management; returns unavailable on APM-only tenants). |
+
+All query tools accept an optional `to_ms` (epoch milliseconds) to anchor the
+lookback window to the event's end time instead of "now" — pass it to
+investigate a past/closed incident within the window it actually occurred in. Without
+`to_ms` the window ends at the current time.
+
+## Application-perspective alerts
+
+An Instana Smart Alert can fire on an **Application Perspective** — a named group
+of services — rather than a single service. The alert's name is the application,
+not something you can query as a `service_name`. For those, call
+`instana_get_application_context(application="<name>")` first: it resolves the
+application to its member services and ranks which of them are erroring most, so
+you can drill into the real failing service with
+`instana_get_investigation_context` / `instana_error_analysis` instead of
+querying the application name as if it were a service.
 
 ## Configuration
 
