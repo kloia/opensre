@@ -186,6 +186,7 @@ def instana_get_events(
     open_only: bool = False,
     include_changes: bool = False,
     event_type_filters: list[str] | None = None,
+    to_ms: int | None = None,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
@@ -195,7 +196,7 @@ def instana_get_events(
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         events = client.get_events(
-            window_size_ms=window_size_ms, event_type_filters=event_type_filters
+            window_size_ms=window_size_ms, event_type_filters=event_type_filters, to_ms=to_ms
         )
         ranked = _rank_events(
             events,
@@ -274,6 +275,7 @@ def instana_application_metrics(
     service_name: str | None = None,
     window_size_ms: int = 3_600_000,
     granularity_s: int = 60,
+    to_ms: int | None = None,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
@@ -286,6 +288,7 @@ def instana_application_metrics(
             service_name=service_name,
             window_size_ms=window_size_ms,
             granularity_s=granularity_s,
+            to_ms=to_ms,
         )
         return {
             "source": "instana",
@@ -355,6 +358,7 @@ def instana_traces(
     window_size_ms: int = 3_600_000,
     max_traces: int = 10,
     erroneous_only: bool = False,
+    to_ms: int | None = None,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
@@ -368,6 +372,7 @@ def instana_traces(
             window_size_ms=window_size_ms,
             max_traces=max_traces,
             erroneous_only=erroneous_only,
+            to_ms=to_ms,
         )
         return {
             "source": "instana",
@@ -547,6 +552,7 @@ def instana_resolve_aws_resource(
             "window_size_ms": {"type": "integer", "default": 3_600_000},
             "max_events": {"type": "integer", "default": 20},
             "max_traces": {"type": "integer", "default": 5},
+            "to_ms": {"type": "integer"},
         },
         "required": ["service_name"],
     },
@@ -560,6 +566,7 @@ def instana_get_investigation_context(
     window_size_ms: int = 3_600_000,
     max_events: int = 20,
     max_traces: int = 5,
+    to_ms: int | None = None,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
@@ -570,7 +577,7 @@ def instana_get_investigation_context(
         client = _resolve_client(base_url, api_token, _client_override)
 
         def _events() -> list[dict[str, Any]]:
-            raw = client.get_events(window_size_ms=window_size_ms)
+            raw = client.get_events(window_size_ms=window_size_ms, to_ms=to_ms)
             ranked = _rank_events(
                 raw,
                 min_severity=1,
@@ -583,7 +590,7 @@ def instana_get_investigation_context(
 
         def _metrics() -> dict[str, Any]:
             return client.application_metrics(
-                service_name=service_name, window_size_ms=window_size_ms
+                service_name=service_name, window_size_ms=window_size_ms, to_ms=to_ms
             )
 
         def _traces() -> list[dict[str, Any]]:
@@ -591,6 +598,7 @@ def instana_get_investigation_context(
                 service_name=service_name,
                 window_size_ms=window_size_ms,
                 max_traces=max_traces,
+                to_ms=to_ms,
             )
 
         def _errors() -> dict[str, list[dict[str, Any]]]:
@@ -600,14 +608,17 @@ def instana_get_investigation_context(
                 "error_messages": _safe(
                     client.error_messages,
                     service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    to_ms=to_ms,
                 ),
                 "http_status": _safe(
                     client.error_http_status,
                     service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    to_ms=to_ms,
                 ),
                 "error_endpoints": _safe(
                     client.error_endpoints,
                     service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    to_ms=to_ms,
                 ),
             }
 
@@ -679,6 +690,7 @@ def instana_get_investigation_context(
             "service_name": {"type": "string"},
             "window_size_ms": {"type": "integer", "default": 3_600_000},
             "limit": {"type": "integer", "default": 10},
+            "to_ms": {"type": "integer"},
         },
         "required": [],
     },
@@ -691,6 +703,7 @@ def instana_error_analysis(
     service_name: str = "",
     window_size_ms: int = 3_600_000,
     limit: int = 10,
+    to_ms: int | None = None,
     base_url: str = "",
     api_token: str = "",
     _client_override: InstanaClient | None = None,
@@ -703,11 +716,11 @@ def instana_error_analysis(
         # error_messages is the primary call: a hard failure (auth/connection) surfaces as
         # available=False via the outer except. The enrichment facets are best-effort so a
         # tenant-specific tag 400 can't blank the primary signal.
-        messages = client.error_messages(service_name=svc, window_size_ms=window_size_ms, limit=limit)
-        http_status = _safe(client.error_http_status, service_name=svc, window_size_ms=window_size_ms, limit=limit)
-        endpoints = _safe(client.error_endpoints, service_name=svc, window_size_ms=window_size_ms, limit=limit)
+        messages = client.error_messages(service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
+        http_status = _safe(client.error_http_status, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
+        endpoints = _safe(client.error_endpoints, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
         top_services = (
-            _safe(client.errors_by_service, window_size_ms=window_size_ms, limit=limit)
+            _safe(client.errors_by_service, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
             if svc is None
             else []
         )

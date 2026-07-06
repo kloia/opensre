@@ -280,3 +280,25 @@ def test_error_analysis_graceful_unavailable() -> None:
     assert result["error_messages"] == []
     assert result["http_status"] == []
     assert result["error_endpoints"] == []
+
+
+def test_investigation_context_passes_to_ms() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = []
+    fake.application_metrics.return_value = {"metrics": {}}
+    fake.traces.return_value = []
+    fake.error_messages.return_value = []
+    fake.error_http_status.return_value = []
+    fake.error_endpoints.return_value = []
+    instana_get_investigation_context(service_name="svc", to_ms=123, _client_override=fake)
+    # every timeframe-bearing client call receives to_ms=123
+    assert fake.application_metrics.call_args.kwargs.get("to_ms") == 123
+    assert fake.error_messages.call_args.kwargs.get("to_ms") == 123
+    assert fake.traces.call_args.kwargs.get("to_ms") == 123
+
+
+def test_traces_tool_passes_to_ms() -> None:
+    fake = MagicMock()
+    fake.traces.return_value = []
+    instana_traces(service_name="svc", to_ms=123, _client_override=fake)
+    assert fake.traces.call_args.kwargs.get("to_ms") == 123
