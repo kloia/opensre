@@ -182,6 +182,30 @@ def test_to_converse_messages_converts_string_content() -> None:
     assert converted == [{"role": "user", "content": [{"text": "hello"}]}]
 
 
+def test_to_converse_messages_strips_internal_markers() -> None:
+    # Seed/duplicate messages carry internal bookkeeping keys (used by context
+    # budgeting to pin them). Converse rejects any message field other than
+    # role/content, so these must never reach the request payload.
+    tool_use_msg = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "seed_x", "name": "x", "input": {}}}],
+        "_opensre_seed": True,
+    }
+    tool_result_msg = {
+        "role": "user",
+        "content": [{"toolResult": {"toolUseId": "seed_x", "content": [{"json": {}}]}}],
+        "_opensre_seed": True,
+        "_opensre_duplicate_result": True,
+    }
+    converted = to_converse_messages([tool_use_msg, tool_result_msg])
+    assert converted == [
+        {"role": "assistant", "content": tool_use_msg["content"]},
+        {"role": "user", "content": tool_result_msg["content"]},
+    ]
+    assert all("_opensre_seed" not in m for m in converted)
+    assert all("_opensre_duplicate_result" not in m for m in converted)
+
+
 def test_apply_guardrails_wraps_string_content_in_text_blocks() -> None:
     from unittest.mock import MagicMock, patch
 
