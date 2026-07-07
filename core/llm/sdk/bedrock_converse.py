@@ -60,14 +60,20 @@ def build_converse_tool_specs(tools: list[Any]) -> list[dict[str, Any]]:
 
 
 def to_converse_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert investigation messages to Converse ``messages`` shape."""
+    """Convert investigation messages to Converse ``messages`` shape.
+
+    Only ``role`` and ``content`` are forwarded. Internal bookkeeping keys such
+    as ``_opensre_seed`` / ``_opensre_duplicate_result`` (added for context-budget
+    pinning) must never reach the request — Converse rejects any message field
+    other than role/content ("Extra inputs are not permitted").
+    """
     converted: list[dict[str, Any]] = []
     for message in messages:
         content = message.get("content", "")
         if isinstance(content, str):
             converted.append({"role": message["role"], "content": [{"text": content}]})
         else:
-            converted.append(message)
+            converted.append({"role": message["role"], "content": content})
     return converted
 
 
