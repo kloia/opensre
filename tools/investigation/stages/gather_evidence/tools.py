@@ -11,6 +11,7 @@ from core.domain.alerts.alert_source import (
     primary_sources_for_alert,
     relevant_sources_for_alert,
     resolve_alert_source,
+    select_seed_tool_names,
 )
 from core.llm.types import ToolCall
 from platform.observability.tool_trace import redact_sensitive
@@ -181,6 +182,64 @@ def build_connected_tool_context(
     }
 
 
+def _required_input_names(tool: RegisteredTool) -> list[str]:
+    """Return the required input parameter names for a tool, from its input_schema."""
+    schema = getattr(tool, "input_schema", None)
+    if isinstance(schema, dict):
+        required = schema.get("required")
+        if isinstance(required, list):
+            return [str(name) for name in required]
+    return []
+
+
+def _instana_seed_params(state: dict[str, Any], tool_name: str) -> dict[str, Any]:
+    """Scope + time-anchor params for an Instana seed call, read from alert state.
+
+    Uses the enriched ``raw_alert`` the sidecar builds (entity_type, entity_label,
+    service_name, hosts, to_ms, window_size_ms). A key is included only when its
+    source value is present. Unscoped Instana seeds (where the required scope arg
+    such as ``application``, ``service_name``, or ``query`` is not available) are
+    skipped by ``build_seed_calls`` — the tools have no default for their scope arg.
+    ``instana_infrastructure_health`` has no ``to_ms`` param, so it is not injected.
+
+    The handled tool names must stay in sync with INSTANA_ENTITY_SEED_TOOL in
+    core/domain/alerts/alert_source.py.
+    """
+    raw = state.get("raw_alert")
+    if not isinstance(raw, dict):
+        return {}
+    entity_label = raw.get("entity_label")
+    service_name = raw.get("service_name")
+    hosts = raw.get("hosts")
+    to_ms = raw.get("to_ms")
+    window_size_ms = raw.get("window_size_ms")
+
+    params: dict[str, Any] = {}
+    if tool_name == "instana_get_application_context":
+        app = entity_label or service_name
+        if app:
+            params["application"] = app
+        if to_ms is not None:
+            params["to_ms"] = to_ms
+        if window_size_ms is not None:
+            params["window_size_ms"] = window_size_ms
+    elif tool_name == "instana_get_investigation_context":
+        svc = service_name or entity_label
+        if svc:
+            params["service_name"] = svc
+        if to_ms is not None:
+            params["to_ms"] = to_ms
+        if window_size_ms is not None:
+            params["window_size_ms"] = window_size_ms
+    elif tool_name == "instana_infrastructure_health":
+        query = entity_label or (hosts[0] if isinstance(hosts, list) and hosts else None)
+        if query:
+            params["query"] = query
+        if window_size_ms is not None:
+            params["window_size_ms"] = window_size_ms
+    return params
+
+
 def build_seed_calls(
     state: dict[str, Any],
     tools: list[RegisteredTool],
@@ -197,7 +256,14 @@ def build_seed_calls(
 
     resolved = state.get("resolved_integrations") or {}
     tool_sources = availability_view(resolved)
-    seed_tools = [t for t in tools if str(t.source) in target_sources]
+    specific = select_seed_tool_names(state, alert_source)
+    if specific is not None:
+        wanted = set(specific)
+        seed_tools = [
+            t for t in tools if t.name in wanted and str(t.source) in target_sources
+        ]
+    else:
+        seed_tools = [t for t in tools if str(t.source) in target_sources]
     if not seed_tools:
         return []
 
@@ -211,6 +277,16 @@ def build_seed_calls(
             injected = tool.extract_params(tool_sources)
         except Exception:
             injected = {}
+        if alert_source == "instana":
+            # Instana scope + time anchor from alert state override extract_params
+            # defaults (extract_params only supplies creds, so no real collision).
+            injected = {**injected, **_instana_seed_params(state, tool.name)}
+            # Skip a seed we can't scope: application_context/investigation_context/
+            # infrastructure_health each need a scope arg (application/service_name/
+            # query). Without it the call fails validation at execution — better to
+            # emit no seed and let the agent proceed via normal source routing.
+            if any(name not in injected for name in _required_input_names(tool)):
+                continue
         tool_id = new_tool_use_id() if use_converse_ids else f"seed_{tool.name}"
         calls.append(ToolCall(id=tool_id, name=tool.name, input=public_tool_input(injected)))
 
