@@ -315,7 +315,12 @@ def instana_application_metrics(
     display_name="Instana Infrastructure",
     source="instana",
     description="Query infrastructure entities (hosts/containers/pods) and their health/metrics.",
-    use_cases=["Checking host/container/pod health and saturation during an incident"],
+    use_cases=[
+        "Checking host/container/pod health and saturation during an incident",
+        "Confirming a host/infrastructure alert against CPU/memory/disk metrics",
+        "Mapping an alerting host to its running containers/pods",
+    ],
+    tags=("infrastructure", "hosts", "saturation", "instana"),
     requires=["query"],
     evidence_type="topology",
     side_effect_level="read_only",

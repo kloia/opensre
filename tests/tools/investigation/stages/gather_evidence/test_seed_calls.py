@@ -56,17 +56,24 @@ def test_host_alert_seeds_infrastructure_health_with_query() -> None:
     assert "to_ms" not in calls[0].input
 
 
-def test_thin_alert_omits_absent_params() -> None:
+def test_thin_service_alert_skips_unscoped_seed() -> None:
     state = {
         "alert_source": "instana",
         "raw_alert": {"alert_source": "instana", "entity_type": "service"},
         "resolved_integrations": {"instana": {"base_url": "x", "api_token": "t"}},
     }
-    calls = build_seed_calls(state, _instana_tools(), llm=None)
-    assert len(calls) == 1
-    assert calls[0].name == "instana_get_investigation_context"
-    assert "to_ms" not in calls[0].input
-    assert "service_name" not in calls[0].input
+    # investigation_context needs service_name; none available → no seed emitted.
+    assert build_seed_calls(state, _instana_tools(), llm=None) == []
+
+
+def test_thin_application_alert_skips_unscoped_seed() -> None:
+    state = {
+        "alert_source": "instana",
+        "raw_alert": {"alert_source": "instana", "entity_type": "application"},
+        "resolved_integrations": {"instana": {"base_url": "x", "api_token": "t"}},
+    }
+    # application_context needs application; none available → no seed emitted.
+    assert build_seed_calls(state, _instana_tools(), llm=None) == []
 
 
 def test_instana_narrows_to_single_seed() -> None:

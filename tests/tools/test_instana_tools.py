@@ -350,6 +350,7 @@ def test_error_analysis_tool_forwards_to_ms() -> None:
         "instana_error_analysis",
         "instana_application_metrics",
         "instana_get_events",
+        "instana_infrastructure_health",
         "instana_traces",
     ],
 )

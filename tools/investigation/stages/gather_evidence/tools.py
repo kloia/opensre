@@ -182,12 +182,24 @@ def build_connected_tool_context(
     }
 
 
+def _required_input_names(tool: RegisteredTool) -> list[str]:
+    """Return the required input parameter names for a tool, from its input_schema."""
+    schema = getattr(tool, "input_schema", None)
+    if isinstance(schema, dict):
+        required = schema.get("required")
+        if isinstance(required, list):
+            return [str(name) for name in required]
+    return []
+
+
 def _instana_seed_params(state: dict[str, Any], tool_name: str) -> dict[str, Any]:
     """Scope + time-anchor params for an Instana seed call, read from alert state.
 
     Uses the enriched ``raw_alert`` the sidecar builds (entity_type, entity_label,
     service_name, hosts, to_ms, window_size_ms). A key is included only when its
-    source value is present, so a thin alert degrades to the tool's own defaults.
+    source value is present. Unscoped Instana seeds (where the required scope arg
+    such as ``application``, ``service_name``, or ``query`` is not available) are
+    skipped by ``build_seed_calls`` — the tools have no default for their scope arg.
     ``instana_infrastructure_health`` has no ``to_ms`` param, so it is not injected.
 
     The handled tool names must stay in sync with INSTANA_ENTITY_SEED_TOOL in
@@ -269,6 +281,12 @@ def build_seed_calls(
             # Instana scope + time anchor from alert state override extract_params
             # defaults (extract_params only supplies creds, so no real collision).
             injected = {**injected, **_instana_seed_params(state, tool.name)}
+            # Skip a seed we can't scope: application_context/investigation_context/
+            # infrastructure_health each need a scope arg (application/service_name/
+            # query). Without it the call fails validation at execution — better to
+            # emit no seed and let the agent proceed via normal source routing.
+            if any(name not in injected for name in _required_input_names(tool)):
+                continue
         tool_id = new_tool_use_id() if use_converse_ids else f"seed_{tool.name}"
         calls.append(ToolCall(id=tool_id, name=tool.name, input=public_tool_input(injected)))
 
