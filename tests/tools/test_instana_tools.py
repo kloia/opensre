@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from integrations.instana.tools import (
     instana_error_analysis,
     instana_get_application_context,
@@ -338,3 +340,22 @@ def test_error_analysis_tool_forwards_to_ms() -> None:
     assert fake.error_messages.call_args.kwargs.get("to_ms") == 777
     assert fake.error_http_status.call_args.kwargs.get("to_ms") == 777
     assert fake.error_endpoints.call_args.kwargs.get("to_ms") == 777
+
+
+@pytest.mark.parametrize(
+    "tool_fn_name",
+    [
+        "instana_get_application_context",
+        "instana_get_investigation_context",
+        "instana_error_analysis",
+        "instana_application_metrics",
+        "instana_get_events",
+        "instana_traces",
+    ],
+)
+def test_primary_instana_tools_have_rich_metadata(tool_fn_name) -> None:
+    import integrations.instana.tools as mod
+
+    rt = getattr(mod, tool_fn_name).__opensre_registered_tool__
+    assert len(rt.use_cases) >= 2, f"{tool_fn_name} needs >=2 use_cases"
+    assert rt.tags, f"{tool_fn_name} needs tags"

@@ -171,7 +171,12 @@ def _rank_events(
         "'change'-type events (host online/offline noise) are excluded by default; set "
         "include_changes=true to include them. Lower min_severity or raise max_events to widen."
     ),
-    use_cases=["Finding active incidents or issues affecting a service or entity"],
+    use_cases=[
+        "Finding active incidents or issues affecting a service or entity",
+        "Checking whether an alert corresponds to an open Instana event",
+        "Reviewing recent state changes around the incident window",
+    ],
+    tags=("events", "incidents", "instana"),
     requires=[],
     evidence_type="events",
     side_effect_level="read_only",
@@ -263,7 +268,12 @@ def instana_get_event_detail(
     display_name="Instana Application Metrics",
     source="instana",
     description="Fetch golden-signal metrics (latency, error rate, throughput) for an application/service.",
-    use_cases=["Checking latency/error-rate/throughput for a service during an incident"],
+    use_cases=[
+        "Checking latency/error-rate/throughput for a service during an incident",
+        "Confirming a latency or error-rate alert against golden-signal metrics",
+        "Comparing a service's metrics to its pre-incident baseline",
+    ],
+    tags=("metrics", "golden-signals", "latency", "instana"),
     requires=[],
     evidence_type="metrics",
     side_effect_level="read_only",
@@ -345,7 +355,12 @@ def instana_infrastructure_health(
         "into with instana_get_trace_detail. Set erroneous_only=true for error-rate incidents "
         "to get the actual failing traces (default returns the slowest by latency)."
     ),
-    use_cases=["Finding the slowest traces/endpoints and which trace to drill into"],
+    use_cases=[
+        "Finding the slowest traces/endpoints and which trace to drill into",
+        "Locating erroring calls behind a latency or error-rate alert",
+        "Identifying the failing downstream service in a request path",
+    ],
+    tags=("traces", "latency", "errors", "instana"),
     requires=["service_name"],
     evidence_type="traces",
     side_effect_level="read_only",
@@ -534,7 +549,7 @@ def instana_resolve_aws_resource(
     display_name="Instana investigation context",
     source="instana",
     evidence_type="events",
-    tags=("events", "metrics", "traces"),
+    tags=("events", "metrics", "traces", "context", "instana"),
     cost_tier="moderate",
     description=(
         "One-shot RCA context for a service: recent events, golden-signal metric summary, "
@@ -543,6 +558,11 @@ def instana_resolve_aws_resource(
     use_cases=[
         "Starting an investigation on an Instana-monitored service",
         "Getting events + metrics + erroring traces in one call",
+        "Drilling into a member service returned by instana_get_application_context",
+    ],
+    examples=[
+        "For a service latency alert, fetch events + golden signals + slow traces at once.",
+        "After application context returns be-orders, pull its full RCA bundle.",
     ],
     requires=["service_name"],
     input_schema={
@@ -679,9 +699,12 @@ def instana_get_investigation_context(
         "signal for naming the real cause of failures."
     ),
     use_cases=[
-        "Finding the real exception text or HTTP status behind a service's errors",
-        "Naming the erroring endpoint (e.g. POST /payments returning 500)",
-        "Ranking which services are erroring most across the system",
+        "Finding the real exception messages and failing endpoints for a service",
+        "Diagnosing an error-rate alert down to specific 5xx endpoints",
+        "Identifying which downstream service is throwing the errors",
+    ],
+    examples=[
+        "For an error-rate alert on be-payments, surface exception messages + 5xx endpoints.",
     ],
     requires=[],
     input_schema={
@@ -751,7 +774,7 @@ def instana_error_analysis(
     display_name="Instana application context",
     source="instana",
     evidence_type="topology",
-    tags=("application", "services", "rca"),
+    tags=("application", "services", "rca", "instana"),
     cost_tier="moderate",
     description=(
         "For an Instana Application Perspective alert (entity_type=application), resolve the "
@@ -760,7 +783,13 @@ def instana_error_analysis(
         "instana_get_investigation_context / instana_error_analysis. Do NOT pass an application "
         "name as service_name to the service tools."
     ),
-    use_cases=["Finding the real member services behind an Instana application-perspective alert"],
+    use_cases=[
+        "Finding the real member services behind an Instana application-perspective alert",
+        "Resolving which member service is erroring most for an application alert",
+    ],
+    examples=[
+        "For an Application Perspective alert, resolve the app to its member services then drill in.",
+    ],
     requires=["application"],
     input_schema={
         "type": "object",
