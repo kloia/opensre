@@ -43,6 +43,23 @@ def _anthropic_tool_schema(tool: Any) -> dict[str, Any]:
     }
 
 
+def _strip_internal_message_keys(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop internal bookkeeping keys before sending messages to a provider API.
+
+    Seed and duplicate-result messages carry ``_``-prefixed markers (e.g.
+    ``_opensre_seed`` / ``_opensre_duplicate_result``) used by context budgeting to
+    pin them. These are not valid message fields — the Anthropic Messages API
+    rejects any unknown key ("Extra inputs are not permitted", HTTP 400). Only the
+    top-level marker keys are stripped; message ``content`` is left untouched.
+    """
+    return [
+        {key: value for key, value in message.items() if not key.startswith("_")}
+        for message in messages
+    ]
+
+
 class AnthropicAgentClient:
     """Anthropic client with native tool-calling for the agent loop."""
 
@@ -92,7 +109,7 @@ class AnthropicAgentClient:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
-            "messages": messages,
+            "messages": _strip_internal_message_keys(messages),
         }
         if system:
             kwargs["system"] = system

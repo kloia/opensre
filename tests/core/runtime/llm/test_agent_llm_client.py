@@ -235,6 +235,51 @@ def test_anthropic_credit_balance_too_low_raises_LLMCreditExhaustedError(
     assert call_count == 1
 
 
+def test_anthropic_invoke_strips_internal_marker_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seed/duplicate messages carry internal ``_opensre_*`` pin markers. The
+    Anthropic Messages API rejects any unknown message field ("Extra inputs are
+    not permitted"), so invoke must strip them before sending."""
+    _install_fake_anthropic(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    captured: dict[str, Any] = {}
+
+    def capture_create(**kwargs: Any) -> object:
+        captured.update(kwargs)
+        return types.SimpleNamespace(content=[], stop_reason="end_turn")
+
+    client = AnthropicAgentClient(model="claude-sonnet-4-6")
+    client._client = types.SimpleNamespace(
+        messages=types.SimpleNamespace(create=capture_create)
+    )
+
+    messages = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "seed_x", "name": "x", "input": {}}],
+            "_opensre_seed": True,
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "seed_x", "content": "{}"}],
+            "_opensre_seed": True,
+            "_opensre_duplicate_result": True,
+        },
+    ]
+    client.invoke(messages=messages)
+
+    sent = captured["messages"]
+    assert all("_opensre_seed" not in m for m in sent)
+    assert all("_opensre_duplicate_result" not in m for m in sent)
+    # role/content are preserved untouched.
+    assert sent[0] == {"role": "user", "content": "hello"}
+    assert sent[1]["content"] == messages[1]["content"]
+    assert sent[2]["content"] == messages[2]["content"]
+
+
 def test_openai_insufficient_quota_raises_LLMCreditExhaustedError(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
