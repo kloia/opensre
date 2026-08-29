@@ -146,8 +146,15 @@ _APPS_RESPONSE = {"items": [{"id": "APPID1", "label": "ITSM Platform Lab Environ
 def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None:
     client = InstanaClient(InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"}))
     calls: dict[str, Any] = {}
-    def fake_get(path, params=None): calls["get"] = (path, params); return _APPS_RESPONSE
-    def fake_post(path, json=None): calls.setdefault("posts", []).append((path, json)); return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 5.0]]}}]}
+
+    def fake_get(path, params=None):
+        calls["get"] = (path, params)
+        return _APPS_RESPONSE
+
+    def fake_post(path, json=None):
+        calls.setdefault("posts", []).append((path, json))
+        return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 5.0]]}}]}
+
     client.get = fake_get  # type: ignore[method-assign]
     client.post = fake_post  # type: ignore[method-assign]
     out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5)
