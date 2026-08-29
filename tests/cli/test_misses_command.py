@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -104,7 +104,7 @@ def test_export_writes_alert_json_files(opensre_home: Path, tmp_path: Path) -> N
     # Must fall inside the `--since 30d` window below regardless of when the
     # suite runs — a fixed historical timestamp would eventually age out and
     # fail this filter for reasons unrelated to what the test actually checks.
-    recent = datetime.now(timezone.utc).isoformat()
+    recent = datetime.now(UTC).isoformat()
     _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-1", timestamp=recent)
     _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-2", timestamp=recent)
     _seed("alert-B", MissTaxonomy.TOOL_FAILURE, feedback_id="fb-3", timestamp=recent)
