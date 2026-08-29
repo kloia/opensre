@@ -513,6 +513,53 @@ def _eks_pod_logs_case() -> ToolFailureCase:
     return ToolFailureCase("eks_pod_logs", patch, invoke, "get_eks_pod_logs", "eks")
 
 
+def _instana_case(
+    case_id: str, tool_name: str, invoke_kwargs: dict[str, Any]
+) -> ToolFailureCase:
+    """Every Instana tool shares one call shape: _resolve_client() raising is
+    what every except block guards against, so patching it once covers all of
+    them without needing to know each tool's specific client method."""
+
+    def patch(mp: pytest.MonkeyPatch) -> None:
+        import integrations.instana.tools as mod
+
+        mp.setattr(mod, "_resolve_client", MagicMock(side_effect=RuntimeError("instana")))
+
+    def invoke() -> dict[str, Any]:
+        import integrations.instana.tools as mod
+
+        return getattr(mod, tool_name)(**invoke_kwargs)
+
+    return ToolFailureCase(case_id, patch, invoke, tool_name, "instana")
+
+
+_INSTANA_FAILURE_CASES: list[ToolFailureCase] = [
+    _instana_case("instana_get_events", "instana_get_events", {"service_name": "be-gateway"}),
+    _instana_case("instana_get_event_detail", "instana_get_event_detail", {"event_id": "e1"}),
+    _instana_case(
+        "instana_application_metrics", "instana_application_metrics", {"service_name": "be-gateway"}
+    ),
+    _instana_case(
+        "instana_infrastructure_health", "instana_infrastructure_health", {"query": "entity.type:host"}
+    ),
+    _instana_case("instana_traces", "instana_traces", {"service_name": "be-gateway"}),
+    _instana_case("instana_get_trace_detail", "instana_get_trace_detail", {"trace_id": "t1"}),
+    _instana_case(
+        "instana_resolve_aws_resource", "instana_resolve_aws_resource", {"snapshot_id": "s1"}
+    ),
+    _instana_case(
+        "instana_get_investigation_context",
+        "instana_get_investigation_context",
+        {"service_name": "be-gateway"},
+    ),
+    _instana_case("instana_error_analysis", "instana_error_analysis", {"service_name": "be-gateway"}),
+    _instana_case(
+        "instana_get_application_context", "instana_get_application_context", {"application": "App"}
+    ),
+    _instana_case("instana_search_logs", "instana_search_logs", {"query": "error"}),
+]
+
+
 def _patch_openclaw_runtime(mp: pytest.MonkeyPatch) -> None:
     """Shared patches for all OpenClaw cases — bypass the config/runtime guards.
 
@@ -776,6 +823,7 @@ _TOOL_FAILURE_CASES: list[ToolFailureCase] = [
     _posthog_mcp_call_tool_case(),
     _sentry_mcp_list_case(),
     _sentry_mcp_call_tool_case(),
+    *_INSTANA_FAILURE_CASES,
 ]
 
 
@@ -974,6 +1022,21 @@ _MIGRATED_TOOL_NAMES: frozenset[str] = frozenset(
         # Sentry MCP — both swallow sites in SentryMCPTool/__init__.py.
         "list_sentry_tools",
         "call_sentry_tool",
+        # Instana — every tool in integrations/instana/tools/__init__.py deliberately
+        # catches and returns a structured available:False dict via a shared _report()
+        # helper that calls report_run_error. instana_search_logs only reports the
+        # genuine-failure branch, not the expected "Log Management not licensed" 404.
+        "instana_get_events",
+        "instana_get_event_detail",
+        "instana_application_metrics",
+        "instana_infrastructure_health",
+        "instana_traces",
+        "instana_get_trace_detail",
+        "instana_resolve_aws_resource",
+        "instana_get_investigation_context",
+        "instana_error_analysis",
+        "instana_get_application_context",
+        "instana_search_logs",
     }
 )
 

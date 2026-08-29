@@ -397,7 +397,8 @@ def test_application_context_tool_happy_and_graceful() -> None:
     assert r["services"][0]["service"] == "fe"                     # member services surfaced
     assert r["top_error_services"][0]["service"] == "be-payments"
     assert fake.application_context.call_args.kwargs.get("to_ms") == 999
-    fake2 = MagicMock(); fake2.application_context.side_effect = RuntimeError("400 bad app")
+    fake2 = MagicMock()
+    fake2.application_context.side_effect = RuntimeError("400 bad app")
     r2 = instana_get_application_context(application="App", _client_override=fake2)
     assert r2["available"] is False
     assert r2["services"] == [] and r2["top_error_services"] == []

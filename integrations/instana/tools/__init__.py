@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from integrations.instana.client import InstanaClient, InstanaConfig
+from tools._telemetry import report_run_error
 from tools.tool_decorator import tool
 
 _INJECTED: tuple[str, ...] = ("base_url", "api_token")
@@ -64,6 +65,11 @@ def _error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _report(exc: Exception, tool_name: str) -> None:
+    """Sentry-report an exception swallowed by an Instana tool's except block."""
+    report_run_error(exc, tool_name=tool_name, source="instana", component="integrations.instana.tools")
 
 
 def _safe(fn: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -260,6 +266,7 @@ def instana_get_events(
         scope = f"scoped to entities plausibly belonging to '{service_name}'"
         return {"source": "instana", "available": True, "scope": scope, **ranked}
     except Exception as exc:
+        _report(exc, "instana_get_events")
         return {"source": "instana", "available": False, "error": _error(exc), "events": []}
 
 
@@ -302,6 +309,7 @@ def instana_get_event_detail(
         detail = client.get_event_detail(eid)
         return {"source": "instana", "available": True, "event_id": eid, "event": detail}
     except Exception as exc:
+        _report(exc, "instana_get_event_detail")
         return {
             "source": "instana",
             "available": False,
@@ -367,6 +375,7 @@ def instana_application_metrics(
             "metrics": result.get("metrics", {}),
         }
     except Exception as exc:
+        _report(exc, "instana_application_metrics")
         return {"source": "instana", "available": False, "error": _error(exc), "metrics": {}}
 
 
@@ -402,6 +411,7 @@ def instana_infrastructure_health(
         snapshots = client.infrastructure_health(query=query, window_size_ms=window_size_ms)
         return {"source": "instana", "available": True, "infrastructure": snapshots}
     except Exception as exc:
+        _report(exc, "instana_infrastructure_health")
         return {
             "source": "instana",
             "available": False,
@@ -461,6 +471,7 @@ def instana_traces(
             "slowest_traces": slowest,
         }
     except Exception as exc:
+        _report(exc, "instana_traces")
         return {"source": "instana", "available": False, "error": _error(exc), "slowest_traces": []}
 
 
@@ -537,6 +548,7 @@ def instana_get_trace_detail(
             "slowest_spans": summarized[:max_spans],
         }
     except Exception as exc:
+        _report(exc, "instana_get_trace_detail")
         return {
             "source": "instana",
             "available": False,
@@ -601,6 +613,7 @@ def instana_resolve_aws_resource(
             "error": None if account else "No aws_account_id found on this snapshot.",
         }
     except Exception as exc:
+        _report(exc, "instana_resolve_aws_resource")
         return {"source": "instana", "available": False, "error": _error(exc), "snapshot_id": sid}
 
 
@@ -733,6 +746,7 @@ def instana_get_investigation_context(
             "truncation_note": f"events<={max_events}, traces<={max_traces}",
         }
     except Exception as exc:
+        _report(exc, "instana_get_investigation_context")
         return {
             "source": "instana",
             "available": False,
@@ -828,6 +842,7 @@ def instana_error_analysis(
             "error_endpoints": endpoints,
         }
     except Exception as exc:
+        _report(exc, "instana_error_analysis")
         return {
             "source": "instana",
             "available": False,
@@ -892,6 +907,7 @@ def instana_get_application_context(
         out = client.application_context(application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit)
         return {"source": "instana", "available": True, **out}
     except Exception as exc:
+        _report(exc, "instana_get_application_context")
         return {"source": "instana", "available": False, "error": _error(exc),
                 "application": application, "services": [], "top_error_services": []}
 
@@ -953,6 +969,11 @@ def instana_search_logs(
         # when there's no status, so a non-404 whose body mentions "not found" can't misfire.
         status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
         not_available = status == 404 or (status is None and "HTTP 404" in detail)
+        if not not_available:
+            # A 404 here means "Log Management isn't licensed on this tenant" — an
+            # expected, benign condition, not a bug worth Sentry noise. Only report
+            # the genuine-failure path.
+            _report(exc, "instana_search_logs")
         return {
             "source": "instana_logs",
             "available": False,
