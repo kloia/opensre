@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,12 @@ from click.testing import CliRunner
 
 from core.domain.feedback import MissTaxonomy, record_miss
 from surfaces.cli.__main__ import cli
+
+# Fixed so tests unrelated to time filtering stay deterministic. Tests that DO
+# filter by time (e.g. `misses export --since 30d`) must not rely on this
+# staying within any given window as wall-clock time moves on — see `_seed`'s
+# `timestamp` override, used by test_export_writes_alert_json_files.
+_FIXED_TIMESTAMP = "2026-06-02T10:00:00+00:00"
 
 
 @pytest.fixture
@@ -19,11 +26,13 @@ def opensre_home(monkeypatch, tmp_path: Path) -> Path:
     return home
 
 
-def _seed(alert: str, taxonomy: MissTaxonomy, *, feedback_id: str = "fb") -> dict:
+def _seed(
+    alert: str, taxonomy: MissTaxonomy, *, feedback_id: str = "fb", timestamp: str = _FIXED_TIMESTAMP
+) -> dict:
     return record_miss(
         {
             "feedback_id": feedback_id,
-            "timestamp": "2026-06-02T10:00:00+00:00",
+            "timestamp": timestamp,
             "run_id": f"run-{feedback_id}",
             "alert_name": alert,
             "rating": "inaccurate",
@@ -92,9 +101,13 @@ def test_stats_reports_recurring_pairs(opensre_home: Path) -> None:
 
 
 def test_export_writes_alert_json_files(opensre_home: Path, tmp_path: Path) -> None:
-    _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-1")
-    _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-2")
-    _seed("alert-B", MissTaxonomy.TOOL_FAILURE, feedback_id="fb-3")
+    # Must fall inside the `--since 30d` window below regardless of when the
+    # suite runs — a fixed historical timestamp would eventually age out and
+    # fail this filter for reasons unrelated to what the test actually checks.
+    recent = datetime.now(timezone.utc).isoformat()
+    _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-1", timestamp=recent)
+    _seed("alert-A", MissTaxonomy.RETRIEVAL_GAP, feedback_id="fb-2", timestamp=recent)
+    _seed("alert-B", MissTaxonomy.TOOL_FAILURE, feedback_id="fb-3", timestamp=recent)
 
     out_dir = tmp_path / "scenarios"
     runner = CliRunner()
