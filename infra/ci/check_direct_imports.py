@@ -64,6 +64,11 @@ _BASELINE_IGNORES: frozenset[str] = frozenset(
         "integrations.datadog.tools -> tools.utils.availability",
         "integrations.datadog.tools -> tools.utils.compaction",
         "integrations.grafana.tools -> tools.tool_decorator",
+        # Instana tools share the same pre-existing dependency on the ``@tool``
+        # decorator (burn down alongside the datadog/grafana entries above),
+        # plus the Sentry-reporting helper used by every tool's except block.
+        "integrations.instana.tools -> tools.tool_decorator",
+        "integrations.instana.tools -> tools._telemetry",
         # Hermes Telegram sink reuses watch-dog alarm dispatch (#1500 refactor).
         "integrations.hermes.sinks -> tools.watch_dog.alarms",
         # Integration setup UX still reaches into the CLI wizard.

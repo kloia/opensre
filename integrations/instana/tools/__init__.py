@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from integrations.instana.client import InstanaClient, InstanaConfig
+from tools._telemetry import report_run_error
 from tools.tool_decorator import tool
 
 _INJECTED: tuple[str, ...] = ("base_url", "api_token")
@@ -64,6 +65,13 @@ def _error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _report(exc: Exception, tool_name: str) -> None:
+    """Sentry-report an exception swallowed by an Instana tool's except block."""
+    report_run_error(
+        exc, tool_name=tool_name, source="instana", component="integrations.instana.tools"
+    )
 
 
 def _safe(fn: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -111,6 +119,28 @@ def _severity(e: dict[str, Any]) -> int:
 _NOISE_EVENT_TYPE = "change"
 
 
+def _event_is_relevant(e: dict[str, Any], relevant_to: str) -> bool:
+    """True if this event's entity plausibly belongs to ``relevant_to``.
+
+    Instana's ``/api/events`` has no entity/service filter param, so callers that need
+    per-service evidence (as opposed to an intentionally account-wide sweep) must filter
+    client-side. ``entityLabel`` formats observed in practice are inconsistent — a bare
+    service name (``"ratings"``), a namespaced service (``"robot-shop/be-gateway"``), or a
+    namespaced pod with a deployment-hash suffix (``"robot-shop/cart-6c94fd9f66-hq749"``,
+    or bracket-wrapped as ``"cart (robot-shop/cart-6c94fd9f66-hq749)"``) — so this is a
+    case-insensitive substring match rather than an exact/prefix match, which is the only
+    rule that holds across all three observed shapes without needing to parse K8s naming
+    conventions. An event with no ``entityLabel`` at all (e.g. some account-level
+    incidents) can't be ruled out either way — it's kept, not dropped, since the goal
+    is excluding *confirmed*-unrelated entities, not maximizing precision at the cost
+    of hiding evidence that simply wasn't labeled.
+    """
+    label = e.get("entityLabel")
+    if not label:
+        return True
+    return relevant_to.lower() in str(label).lower()
+
+
 def _rank_events(
     events: list[dict[str, Any]],
     *,
@@ -118,12 +148,19 @@ def _rank_events(
     open_only: bool,
     max_events: int,
     include_changes: bool,
+    relevant_to: str | None = None,
 ) -> dict[str, Any]:
     """Rank + compact Instana events for RCA, with totals.
 
     Drops ``type == "change"`` infra noise unless ``include_changes``. Keeps events at
     or above ``min_severity`` (and open-only when asked), ranked open-first then by
     severity then recency. Returns the same shape the events tool exposes.
+
+    ``relevant_to``, when given, additionally drops events whose entity doesn't
+    plausibly belong to that service (see ``_event_is_relevant``) — used for per-service
+    evidence gathering; both ``instana_get_investigation_context`` and
+    ``instana_get_events`` always pass it, since ``service_name`` is a required
+    parameter on both tools.
     """
     total = len(events)
     open_count = sum(1 for e in events if e.get("state") == "open")
@@ -137,6 +174,7 @@ def _rank_events(
         if _severity(e) >= min_severity
         and (include_changes or e.get("type") != _NOISE_EVENT_TYPE)
         and (not open_only or e.get("state") == "open")
+        and (relevant_to is None or _event_is_relevant(e, relevant_to))
     ]
     kept.sort(
         key=lambda e: (e.get("state") == "open", _severity(e), e.get("start") or 0),
@@ -146,6 +184,8 @@ def _rank_events(
     filt = f"severity>={min_severity}" + (", open-only" if open_only else ", open-first")
     if not include_changes:
         filt += ", excl-change"
+    if relevant_to is not None:
+        filt += f", relevant-to={relevant_to}"
     return {
         "totals": {"all": total, "open": open_count, "by_severity": by_severity},
         "filter": filt,
@@ -165,16 +205,20 @@ def _rank_events(
     display_name="Instana Events",
     source="instana",
     description=(
-        "List significant Instana events/incidents/issues in a window. Returns the highest "
-        "severity / open events first (compact fields + eventId to drill into via "
+        "List significant Instana events/incidents/issues for a service in a window. Scoped "
+        "to entities plausibly belonging to service_name the same way "
+        "instana_get_investigation_context scopes its events (see _event_is_relevant) — this "
+        "account is shared across multiple unrelated applications/tenants, so an unscoped sweep "
+        "would surface other teams' incidents alongside anything actually relevant. Returns the "
+        "highest severity / open events first (compact fields + eventId to drill into via "
         "instana_get_event_detail), plus totals so nothing is silently dropped. Infra "
         "'change'-type events (host online/offline noise) are excluded by default; set "
         "include_changes=true to include them. Lower min_severity or raise max_events to widen."
     ),
     use_cases=[
-        "Finding active incidents or issues affecting a service or entity",
-        "Checking whether an alert corresponds to an open Instana event",
-        "Reviewing recent state changes around the incident window",
+        "Finding active incidents or issues affecting a specific service or entity",
+        "Checking whether an alert corresponds to an open Instana event for that service",
+        "Reviewing recent state changes around the incident window for a service",
     ],
     tags=("events", "incidents", "instana"),
     requires=[],
@@ -185,6 +229,7 @@ def _rank_events(
     extract_params=_instana_extract_params,
 )
 def instana_get_events(
+    service_name: str,
     window_size_ms: int = 3_600_000,
     min_severity: int = 5,
     max_events: int = 50,
@@ -197,7 +242,16 @@ def instana_get_events(
     _client_override: InstanaClient | None = None,
     **_kwargs: Any,
 ) -> dict:
-    """Return ranked, compacted significant Instana events with full totals."""
+    """Return ranked, compacted significant Instana events with full totals, scoped to service_name.
+
+    ``service_name`` is required (not optional) — this account is shared across
+    unrelated applications, so a real production incident showed the agent
+    treating another application's DB-connectivity event as if it were the
+    alerting service's own evidence purely because the unscoped sweep put it at
+    the top by severity. Forcing scope at the call signature, not just via a
+    description an agent can choose to ignore, closes that path entirely. Use
+    instana_get_investigation_context for a specific alert's own evidence.
+    """
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         events = client.get_events(
@@ -209,9 +263,12 @@ def instana_get_events(
             open_only=open_only,
             max_events=max_events,
             include_changes=include_changes,
+            relevant_to=service_name,
         )
-        return {"source": "instana", "available": True, **ranked}
+        scope = f"scoped to entities plausibly belonging to '{service_name}'"
+        return {"source": "instana", "available": True, "scope": scope, **ranked}
     except Exception as exc:
+        _report(exc, "instana_get_events")
         return {"source": "instana", "available": False, "error": _error(exc), "events": []}
 
 
@@ -254,6 +311,7 @@ def instana_get_event_detail(
         detail = client.get_event_detail(eid)
         return {"source": "instana", "available": True, "event_id": eid, "event": detail}
     except Exception as exc:
+        _report(exc, "instana_get_event_detail")
         return {
             "source": "instana",
             "available": False,
@@ -267,7 +325,13 @@ def instana_get_event_detail(
     name="instana_application_metrics",
     display_name="Instana Application Metrics",
     source="instana",
-    description="Fetch golden-signal metrics (latency, error rate, throughput) for an application/service.",
+    description=(
+        "Fetch golden-signal metrics (latency, error rate, throughput) for a service. "
+        "service_name is required: without it, the underlying API blends latency/error-rate/"
+        "throughput across every service on this shared multi-tenant account into one "
+        "meaningless composite number, silently corrupting any 'confirm this alert against "
+        "golden signals' check."
+    ),
     use_cases=[
         "Checking latency/error-rate/throughput for a service during an incident",
         "Confirming a latency or error-rate alert against golden-signal metrics",
@@ -282,7 +346,7 @@ def instana_get_event_detail(
     extract_params=_instana_extract_params,
 )
 def instana_application_metrics(
-    service_name: str | None = None,
+    service_name: str,
     window_size_ms: int = 3_600_000,
     granularity_s: int = 60,
     to_ms: int | None = None,
@@ -291,7 +355,13 @@ def instana_application_metrics(
     _client_override: InstanaClient | None = None,
     **_kwargs: Any,
 ) -> dict:
-    """Return application golden-signal metrics (v2 API) as magnitude+trend summaries."""
+    """Return per-service golden-signal metrics (v2 API) as magnitude+trend summaries.
+
+    ``service_name`` is required — without it the v2 metrics API has no
+    ``tagFilterExpression`` and blends every service on this shared account
+    into one composite number, which would silently corrupt any comparison
+    against a specific service's alert threshold.
+    """
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         result = client.application_metrics(
@@ -307,6 +377,7 @@ def instana_application_metrics(
             "metrics": result.get("metrics", {}),
         }
     except Exception as exc:
+        _report(exc, "instana_application_metrics")
         return {"source": "instana", "available": False, "error": _error(exc), "metrics": {}}
 
 
@@ -342,6 +413,7 @@ def instana_infrastructure_health(
         snapshots = client.infrastructure_health(query=query, window_size_ms=window_size_ms)
         return {"source": "instana", "available": True, "infrastructure": snapshots}
     except Exception as exc:
+        _report(exc, "instana_infrastructure_health")
         return {
             "source": "instana",
             "available": False,
@@ -401,6 +473,7 @@ def instana_traces(
             "slowest_traces": slowest,
         }
     except Exception as exc:
+        _report(exc, "instana_traces")
         return {"source": "instana", "available": False, "error": _error(exc), "slowest_traces": []}
 
 
@@ -477,6 +550,7 @@ def instana_get_trace_detail(
             "slowest_spans": summarized[:max_spans],
         }
     except Exception as exc:
+        _report(exc, "instana_get_trace_detail")
         return {
             "source": "instana",
             "available": False,
@@ -541,6 +615,7 @@ def instana_resolve_aws_resource(
             "error": None if account else "No aws_account_id found on this snapshot.",
         }
     except Exception as exc:
+        _report(exc, "instana_resolve_aws_resource")
         return {"source": "instana", "available": False, "error": _error(exc), "snapshot_id": sid}
 
 
@@ -609,6 +684,7 @@ def instana_get_investigation_context(
                 open_only=False,
                 max_events=max_events,
                 include_changes=False,
+                relevant_to=service_name,
             )
             events_out: list[dict[str, Any]] = ranked["events"]
             return events_out
@@ -632,17 +708,23 @@ def instana_get_investigation_context(
             return {
                 "error_messages": _safe(
                     client.error_messages,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
                 "http_status": _safe(
                     client.error_http_status,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
                 "error_endpoints": _safe(
                     client.error_endpoints,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
             }
@@ -672,6 +754,7 @@ def instana_get_investigation_context(
             "truncation_note": f"events<={max_events}, traces<={max_traces}",
         }
     except Exception as exc:
+        _report(exc, "instana_get_investigation_context")
         return {
             "source": "instana",
             "available": False,
@@ -700,13 +783,14 @@ def instana_get_investigation_context(
         "duplicate key'), HTTP status codes (e.g. 500), and the erroring endpoints (e.g. "
         "'POST /payments'). Exception messages are empty for services that fail with a status "
         "code and no message — the HTTP status + endpoint facets name the cause in that case. "
-        "Without a service_name, also returns which services are erroring most. The primary "
-        "signal for naming the real cause of failures."
+        "service_name is required: this account is shared across multiple unrelated "
+        "applications/tenants, and an account-wide 'which service is erroring most' sweep "
+        "reads like it names a downstream dependency of your target service when it actually "
+        "just ranks unrelated services by error volume."
     ),
     use_cases=[
         "Finding the real exception messages and failing endpoints for a service",
         "Diagnosing an error-rate alert down to specific 5xx endpoints",
-        "Identifying which downstream service is throwing the errors",
     ],
     examples=[
         "For an error-rate alert on be-payments, surface exception messages + 5xx endpoints.",
@@ -720,7 +804,7 @@ def instana_get_investigation_context(
             "limit": {"type": "integer", "default": 10},
             "to_ms": {"type": "integer"},
         },
-        "required": [],
+        "required": ["service_name"],
     },
     side_effect_level="read_only",
     injected_params=_INJECTED,
@@ -728,7 +812,7 @@ def instana_get_investigation_context(
     extract_params=_instana_extract_params,
 )
 def instana_error_analysis(
-    service_name: str = "",
+    service_name: str,
     window_size_ms: int = 3_600_000,
     limit: int = 10,
     to_ms: int | None = None,
@@ -737,20 +821,39 @@ def instana_error_analysis(
     _client_override: InstanaClient | None = None,
     **_kwargs: Any,
 ) -> dict:
-    """Return ranked error facets (messages, HTTP status, endpoints) + top erroring services."""
+    """Return ranked error facets (messages, HTTP status, endpoints) for one service.
+
+    ``service_name`` is required — not optional — for the same reason
+    ``instana_get_events`` requires it: a real production incident showed the
+    agent reading this tool's account-wide "top erroring services" facet
+    (meant only for account-wide sweeps, not per-service RCA) as if it named a
+    downstream dependency of the service under investigation, when it was
+    really just the loudest unrelated service on a shared multi-tenant
+    account. Removing the account-wide branch entirely — not just gating it
+    behind a description — closes that path at the call signature.
+    """
     try:
         client = _resolve_client(base_url, api_token, _client_override)
         svc = service_name.strip() or None
         # error_messages is the primary call: a hard failure (auth/connection) surfaces as
         # available=False via the outer except. The enrichment facets are best-effort so a
         # tenant-specific tag 400 can't blank the primary signal.
-        messages = client.error_messages(service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-        http_status = _safe(client.error_http_status, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-        endpoints = _safe(client.error_endpoints, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-        top_services = (
-            _safe(client.errors_by_service, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-            if svc is None
-            else []
+        messages = client.error_messages(
+            service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms
+        )
+        http_status = _safe(
+            client.error_http_status,
+            service_name=svc,
+            window_size_ms=window_size_ms,
+            limit=limit,
+            to_ms=to_ms,
+        )
+        endpoints = _safe(
+            client.error_endpoints,
+            service_name=svc,
+            window_size_ms=window_size_ms,
+            limit=limit,
+            to_ms=to_ms,
         )
         return {
             "source": "instana",
@@ -759,9 +862,9 @@ def instana_error_analysis(
             "error_messages": messages,
             "http_status": http_status,
             "error_endpoints": endpoints,
-            "top_services": top_services,
         }
     except Exception as exc:
+        _report(exc, "instana_error_analysis")
         return {
             "source": "instana",
             "available": False,
@@ -770,7 +873,6 @@ def instana_error_analysis(
             "error_messages": [],
             "http_status": [],
             "error_endpoints": [],
-            "top_services": [],
         }
 
 
@@ -824,11 +926,20 @@ def instana_get_application_context(
     """Resolve an Instana Application Perspective → member services + top erroring services."""
     try:
         client = _resolve_client(base_url, api_token, _client_override)
-        out = client.application_context(application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit)
+        out = client.application_context(
+            application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit
+        )
         return {"source": "instana", "available": True, **out}
     except Exception as exc:
-        return {"source": "instana", "available": False, "error": _error(exc),
-                "application": application, "services": [], "top_error_services": []}
+        _report(exc, "instana_get_application_context")
+        return {
+            "source": "instana",
+            "available": False,
+            "error": _error(exc),
+            "application": application,
+            "services": [],
+            "top_error_services": [],
+        }
 
 
 @tool(
@@ -888,6 +999,11 @@ def instana_search_logs(
         # when there's no status, so a non-404 whose body mentions "not found" can't misfire.
         status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
         not_available = status == 404 or (status is None and "HTTP 404" in detail)
+        if not not_available:
+            # A 404 here means "Log Management isn't licensed on this tenant" — an
+            # expected, benign condition, not a bug worth Sentry noise. Only report
+            # the genuine-failure path.
+            _report(exc, "instana_search_logs")
         return {
             "source": "instana_logs",
             "available": False,

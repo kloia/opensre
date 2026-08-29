@@ -249,8 +249,6 @@ def select_seed_tool_names(state: dict[str, Any], source: str) -> list[str] | No
     tools" behavior the caller applies today.
     """
     if source == "instana":
-        tool = INSTANA_ENTITY_SEED_TOOL.get(
-            _instana_entity_type(state), INSTANA_DEFAULT_SEED_TOOL
-        )
+        tool = INSTANA_ENTITY_SEED_TOOL.get(_instana_entity_type(state), INSTANA_DEFAULT_SEED_TOOL)
         return [tool]
     return None

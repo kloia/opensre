@@ -62,12 +62,8 @@ def test_select_seed_host_and_infra() -> None:
 
 
 def test_select_seed_unknown_falls_back_to_default() -> None:
-    assert select_seed_tool_names(_instana_state("weird"), "instana") == [
-        INSTANA_DEFAULT_SEED_TOOL
-    ]
-    assert select_seed_tool_names(_instana_state(None), "instana") == [
-        INSTANA_DEFAULT_SEED_TOOL
-    ]
+    assert select_seed_tool_names(_instana_state("weird"), "instana") == [INSTANA_DEFAULT_SEED_TOOL]
+    assert select_seed_tool_names(_instana_state(None), "instana") == [INSTANA_DEFAULT_SEED_TOOL]
 
 
 def test_select_seed_non_instana_returns_none() -> None:

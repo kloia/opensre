@@ -1,8 +1,8 @@
 # tests/tools/investigation/test_resolve_short_circuit.py
 import inspect
 
-from tools.investigation.stages.resolve_integrations.node import resolve_integrations
 from tools.investigation.capability import astream_investigation
+from tools.investigation.stages.resolve_integrations.node import resolve_integrations
 
 
 def test_resolve_integrations_returns_preset_untouched():

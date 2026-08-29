@@ -259,9 +259,7 @@ def build_seed_calls(
     specific = select_seed_tool_names(state, alert_source)
     if specific is not None:
         wanted = set(specific)
-        seed_tools = [
-            t for t in tools if t.name in wanted and str(t.source) in target_sources
-        ]
+        seed_tools = [t for t in tools if t.name in wanted and str(t.source) in target_sources]
     else:
         seed_tools = [t for t in tools if str(t.source) in target_sources]
     if not seed_tools:
