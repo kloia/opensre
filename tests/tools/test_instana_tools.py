@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from integrations.instana.tools import (
+    instana_application_metrics,
     instana_error_analysis,
     instana_get_application_context,
     instana_get_events,
@@ -91,7 +92,7 @@ def test_get_events_happy_path() -> None:
         {"eventId": "e2", "severity": 5, "state": "closed", "start": 1},
         {"eventId": "e3", "severity": 1, "state": "closed", "start": 0},
     ]
-    result = instana_get_events(min_severity=5, _client_override=fake)
+    result = instana_get_events(service_name="svc", min_severity=5, _client_override=fake)
     assert result["available"] is True
     assert result["totals"]["all"] == 3
     assert result["totals"]["open"] == 1
@@ -106,7 +107,7 @@ def test_get_events_excludes_change_noise_by_default() -> None:
         {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 2},
         {"eventId": "i2", "type": "issue", "severity": 5, "state": "closed", "start": 1},
     ]
-    result = instana_get_events(min_severity=5, _client_override=fake)
+    result = instana_get_events(service_name="svc", min_severity=5, _client_override=fake)
     ids = [e["eventId"] for e in result["events"]]
     assert "c1" not in ids            # change excluded even at high severity
     assert ids == ["i1", "i2"]        # issues kept, open+severity ranked
@@ -118,7 +119,7 @@ def test_get_events_include_changes_opt_in() -> None:
     fake.get_events.return_value = [
         {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 2},
     ]
-    result = instana_get_events(min_severity=5, include_changes=True, _client_override=fake)
+    result = instana_get_events(service_name="svc", min_severity=5, include_changes=True, _client_override=fake)
     assert [e["eventId"] for e in result["events"]] == ["c1"]
 
 
@@ -192,6 +193,67 @@ def test_investigation_context_events_are_ranked_and_denoised() -> None:
     assert ids == ["i1"]   # change c1 dropped, issue kept
 
 
+def test_investigation_context_drops_events_for_unrelated_services() -> None:
+    # Regression test for a real production incident: investigation_context for
+    # "be-gateway" surfaced an unrelated "ratings" service's DB-connectivity issue as
+    # if it were be-gateway's own evidence, because /api/events has no entity filter
+    # and get_events() was returning every open account-wide event unscoped.
+    fake = MagicMock()
+    fake.get_events.return_value = [
+        {"eventId": "own", "type": "issue", "severity": 10, "state": "open", "start": 5,
+         "entityLabel": "be-gateway"},
+        {"eventId": "own-namespaced", "type": "issue", "severity": 10, "state": "open", "start": 4,
+         "entityLabel": "robot-shop/be-gateway"},
+        {"eventId": "own-pod", "type": "issue", "severity": 10, "state": "open", "start": 3,
+         "entityLabel": "robot-shop/be-gateway-7d8f9c6b-xk2p9"},
+        {"eventId": "unrelated-ratings", "type": "issue", "severity": 10, "state": "open", "start": 2,
+         "entityLabel": "ratings"},
+        {"eventId": "unrelated-cart", "type": "issue", "severity": 10, "state": "open", "start": 1,
+         "entityLabel": "cart (robot-shop/cart-6c94fd9f66-hq749)"},
+        {"eventId": "no-label-kept", "type": "issue", "severity": 10, "state": "open", "start": 0},
+    ]
+    fake.application_metrics.return_value = {"metrics": {}}
+    fake.traces.return_value = []
+    fake.error_messages.return_value = []
+    fake.error_http_status.return_value = []
+    fake.error_endpoints.return_value = []
+    result = instana_get_investigation_context(service_name="be-gateway", _client_override=fake)
+    ids = {e["eventId"] for e in result["events"]}
+    # Confirmed-unrelated entities are dropped; an event with no entityLabel at all
+    # can't be ruled out, so it's kept rather than assumed irrelevant.
+    assert ids == {"own", "own-namespaced", "own-pod", "no-label-kept"}
+    assert "unrelated-ratings" not in ids
+    assert "unrelated-cart" not in ids
+
+
+def test_get_events_requires_service_name() -> None:
+    # Regression test for a real production incident: an optional service_name
+    # (tool defaulting to an account-wide sweep) was not enough — the agent
+    # called it unscoped anyway when be-gateway's own scoped evidence came back
+    # clean, got a wall of unrelated robot-shop demo noise (OOM kills,
+    # unschedulable pods, an unrelated "ratings" DB failure), and misattributed
+    # the loudest signal as be-gateway's root cause. Making service_name a
+    # required positional argument closes that path at the call signature,
+    # rather than relying on the agent choosing to honor a description.
+    with pytest.raises(TypeError):
+        instana_get_events(_client_override=MagicMock())  # type: ignore[call-arg]
+
+
+def test_get_events_scopes_by_service_name() -> None:
+    fake = MagicMock()
+    fake.get_events.return_value = [
+        {"eventId": "own", "type": "issue", "severity": 10, "state": "open", "start": 2,
+         "entityLabel": "be-gateway"},
+        {"eventId": "unrelated-ratings", "type": "issue", "severity": 10, "state": "open", "start": 1,
+         "entityLabel": "ratings"},
+    ]
+    result = instana_get_events(service_name="be-gateway", _client_override=fake)
+    ids = {e["eventId"] for e in result["events"]}
+    assert ids == {"own"}
+    assert "unrelated-ratings" not in ids
+    assert "be-gateway" in result["scope"]
+
+
 def test_search_logs_happy_path() -> None:
     fake = MagicMock()
     fake.search_logs.return_value = [
@@ -244,10 +306,9 @@ def test_error_analysis_happy_path() -> None:
     assert result["error_messages"][0]["count"] == 7702
     assert result["http_status"] == [{"status": "500", "count": 40}]
     assert result["error_endpoints"] == [{"endpoint": "POST /profile", "count": 40}]
-    # with a service_name, top_services is empty (focused on the service)
     fake.error_messages.assert_called_once()
-    assert result["top_services"] == []
     fake.errors_by_service.assert_not_called()
+    assert "top_services" not in result
 
 
 def test_error_analysis_status_code_scenario_no_message() -> None:
@@ -264,15 +325,34 @@ def test_error_analysis_status_code_scenario_no_message() -> None:
     assert result["error_endpoints"][0] == {"endpoint": "POST /payments", "count": 1873}
 
 
-def test_error_analysis_no_service_returns_top_services() -> None:
+def test_application_metrics_requires_service_name() -> None:
+    # Without service_name the underlying v2 metrics API has no tagFilterExpression
+    # and blends every service on this shared account into one composite number —
+    # required at the call signature so that corruption can't happen silently.
+    with pytest.raises(TypeError):
+        instana_application_metrics(_client_override=MagicMock())  # type: ignore[call-arg]
+
+
+def test_application_metrics_scopes_to_service() -> None:
     fake = MagicMock()
-    fake.error_messages.return_value = []
-    fake.error_http_status.return_value = []
-    fake.error_endpoints.return_value = []
-    fake.errors_by_service.return_value = [{"service": "catalog", "count": 4498}]
-    result = instana_error_analysis(_client_override=fake)
+    fake.application_metrics.return_value = {
+        "adjustedTimeframe": {"windowSize": 3_600_000},
+        "metrics": {"latency.mean.60": {"points": [1, 2, 3]}},
+    }
+    result = instana_application_metrics(service_name="be-gateway", _client_override=fake)
     assert result["available"] is True
-    assert result["top_services"][0]["service"] == "catalog"
+    assert fake.application_metrics.call_args.kwargs.get("service_name") == "be-gateway"
+
+
+def test_error_analysis_requires_service_name() -> None:
+    # Regression test for a real production incident: this tool's account-wide
+    # "top erroring services" facet (meant only for account-wide sweeps) was
+    # read by the agent as if it named a downstream dependency of the service
+    # under investigation — it was really just the loudest unrelated service on
+    # a shared multi-tenant account. Making service_name required (and dropping
+    # the account-wide branch) closes that path at the call signature.
+    with pytest.raises(TypeError):
+        instana_error_analysis(_client_override=MagicMock())  # type: ignore[call-arg]
 
 
 def test_error_analysis_graceful_unavailable() -> None:
@@ -326,7 +406,7 @@ def test_application_context_tool_happy_and_graceful() -> None:
 def test_get_events_tool_forwards_to_ms() -> None:
     fake = MagicMock()
     fake.get_events.return_value = []
-    instana_get_events(to_ms=777, _client_override=fake)
+    instana_get_events(service_name="svc", to_ms=777, _client_override=fake)
     assert fake.get_events.call_args.kwargs.get("to_ms") == 777
 
 
