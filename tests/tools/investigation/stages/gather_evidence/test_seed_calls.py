@@ -83,9 +83,7 @@ def test_instana_narrows_to_single_seed() -> None:
 
 
 def test_non_instana_source_seeds_all_its_tools() -> None:
-    dd_tools = [
-        t for t in get_registered_tools("investigation") if str(t.source) == "datadog"
-    ]
+    dd_tools = [t for t in get_registered_tools("investigation") if str(t.source) == "datadog"]
     assert len(dd_tools) >= 2  # guard: this test only means something with multiple tools
     state = {
         "alert_source": "datadog",

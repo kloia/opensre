@@ -109,8 +109,8 @@ def test_get_events_excludes_change_noise_by_default() -> None:
     ]
     result = instana_get_events(service_name="svc", min_severity=5, _client_override=fake)
     ids = [e["eventId"] for e in result["events"]]
-    assert "c1" not in ids            # change excluded even at high severity
-    assert ids == ["i1", "i2"]        # issues kept, open+severity ranked
+    assert "c1" not in ids  # change excluded even at high severity
+    assert ids == ["i1", "i2"]  # issues kept, open+severity ranked
     assert result["totals"]["all"] == 3
 
 
@@ -119,7 +119,9 @@ def test_get_events_include_changes_opt_in() -> None:
     fake.get_events.return_value = [
         {"eventId": "c1", "type": "change", "severity": 10, "state": "open", "start": 2},
     ]
-    result = instana_get_events(service_name="svc", min_severity=5, include_changes=True, _client_override=fake)
+    result = instana_get_events(
+        service_name="svc", min_severity=5, include_changes=True, _client_override=fake
+    )
     assert [e["eventId"] for e in result["events"]] == ["c1"]
 
 
@@ -135,10 +137,18 @@ def test_instana_traces_passes_erroneous_only() -> None:
 def test_trace_detail_surfaces_error_counts() -> None:
     fake = MagicMock()
     fake.get_trace_detail.return_value = [
-        {"name": "GET /ok", "duration": 50, "errorCount": 0,
-         "destination": {"service": {"label": "svc-a"}, "endpoint": {"label": "/ok"}}},
-        {"name": "POST /db", "duration": 120, "errorCount": 1,
-         "destination": {"service": {"label": "svc-db"}, "endpoint": {"label": "/db"}}},
+        {
+            "name": "GET /ok",
+            "duration": 50,
+            "errorCount": 0,
+            "destination": {"service": {"label": "svc-a"}, "endpoint": {"label": "/ok"}},
+        },
+        {
+            "name": "POST /db",
+            "duration": 120,
+            "errorCount": 1,
+            "destination": {"service": {"label": "svc-db"}, "endpoint": {"label": "/db"}},
+        },
     ]
     result = instana_get_trace_detail(trace_id="t1", _client_override=fake)
     assert result["available"] is True
@@ -190,7 +200,7 @@ def test_investigation_context_events_are_ranked_and_denoised() -> None:
     fake.error_endpoints.return_value = []
     result = instana_get_investigation_context(service_name="svc", _client_override=fake)
     ids = [e["eventId"] for e in result["events"]]
-    assert ids == ["i1"]   # change c1 dropped, issue kept
+    assert ids == ["i1"]  # change c1 dropped, issue kept
 
 
 def test_investigation_context_drops_events_for_unrelated_services() -> None:
@@ -200,16 +210,46 @@ def test_investigation_context_drops_events_for_unrelated_services() -> None:
     # and get_events() was returning every open account-wide event unscoped.
     fake = MagicMock()
     fake.get_events.return_value = [
-        {"eventId": "own", "type": "issue", "severity": 10, "state": "open", "start": 5,
-         "entityLabel": "be-gateway"},
-        {"eventId": "own-namespaced", "type": "issue", "severity": 10, "state": "open", "start": 4,
-         "entityLabel": "robot-shop/be-gateway"},
-        {"eventId": "own-pod", "type": "issue", "severity": 10, "state": "open", "start": 3,
-         "entityLabel": "robot-shop/be-gateway-7d8f9c6b-xk2p9"},
-        {"eventId": "unrelated-ratings", "type": "issue", "severity": 10, "state": "open", "start": 2,
-         "entityLabel": "ratings"},
-        {"eventId": "unrelated-cart", "type": "issue", "severity": 10, "state": "open", "start": 1,
-         "entityLabel": "cart (robot-shop/cart-6c94fd9f66-hq749)"},
+        {
+            "eventId": "own",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 5,
+            "entityLabel": "be-gateway",
+        },
+        {
+            "eventId": "own-namespaced",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 4,
+            "entityLabel": "robot-shop/be-gateway",
+        },
+        {
+            "eventId": "own-pod",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 3,
+            "entityLabel": "robot-shop/be-gateway-7d8f9c6b-xk2p9",
+        },
+        {
+            "eventId": "unrelated-ratings",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 2,
+            "entityLabel": "ratings",
+        },
+        {
+            "eventId": "unrelated-cart",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 1,
+            "entityLabel": "cart (robot-shop/cart-6c94fd9f66-hq749)",
+        },
         {"eventId": "no-label-kept", "type": "issue", "severity": 10, "state": "open", "start": 0},
     ]
     fake.application_metrics.return_value = {"metrics": {}}
@@ -242,10 +282,22 @@ def test_get_events_requires_service_name() -> None:
 def test_get_events_scopes_by_service_name() -> None:
     fake = MagicMock()
     fake.get_events.return_value = [
-        {"eventId": "own", "type": "issue", "severity": 10, "state": "open", "start": 2,
-         "entityLabel": "be-gateway"},
-        {"eventId": "unrelated-ratings", "type": "issue", "severity": 10, "state": "open", "start": 1,
-         "entityLabel": "ratings"},
+        {
+            "eventId": "own",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 2,
+            "entityLabel": "be-gateway",
+        },
+        {
+            "eventId": "unrelated-ratings",
+            "type": "issue",
+            "severity": 10,
+            "state": "open",
+            "start": 1,
+            "entityLabel": "ratings",
+        },
     ]
     result = instana_get_events(service_name="be-gateway", _client_override=fake)
     ids = {e["eventId"] for e in result["events"]}
@@ -389,12 +441,15 @@ def test_traces_tool_passes_to_ms() -> None:
 
 def test_application_context_tool_happy_and_graceful() -> None:
     fake = MagicMock()
-    fake.application_context.return_value = {"application": "App", "application_id": "APPID1",
+    fake.application_context.return_value = {
+        "application": "App",
+        "application_id": "APPID1",
         "services": [{"service": "fe", "count": 100}],
-        "top_error_services": [{"service": "be-payments", "count": 42}]}
+        "top_error_services": [{"service": "be-payments", "count": 42}],
+    }
     r = instana_get_application_context(application="App", to_ms=999, _client_override=fake)
     assert r["available"] is True
-    assert r["services"][0]["service"] == "fe"                     # member services surfaced
+    assert r["services"][0]["service"] == "fe"  # member services surfaced
     assert r["top_error_services"][0]["service"] == "be-payments"
     assert fake.application_context.call_args.kwargs.get("to_ms") == 999
     fake2 = MagicMock()

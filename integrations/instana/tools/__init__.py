@@ -69,7 +69,9 @@ def _error(exc: Exception) -> str:
 
 def _report(exc: Exception, tool_name: str) -> None:
     """Sentry-report an exception swallowed by an Instana tool's except block."""
-    report_run_error(exc, tool_name=tool_name, source="instana", component="integrations.instana.tools")
+    report_run_error(
+        exc, tool_name=tool_name, source="instana", component="integrations.instana.tools"
+    )
 
 
 def _safe(fn: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -706,17 +708,23 @@ def instana_get_investigation_context(
             return {
                 "error_messages": _safe(
                     client.error_messages,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
                 "http_status": _safe(
                     client.error_http_status,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
                 "error_endpoints": _safe(
                     client.error_endpoints,
-                    service_name=service_name, window_size_ms=window_size_ms, limit=max_traces,
+                    service_name=service_name,
+                    window_size_ms=window_size_ms,
+                    limit=max_traces,
                     to_ms=to_ms,
                 ),
             }
@@ -830,9 +838,23 @@ def instana_error_analysis(
         # error_messages is the primary call: a hard failure (auth/connection) surfaces as
         # available=False via the outer except. The enrichment facets are best-effort so a
         # tenant-specific tag 400 can't blank the primary signal.
-        messages = client.error_messages(service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-        http_status = _safe(client.error_http_status, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
-        endpoints = _safe(client.error_endpoints, service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms)
+        messages = client.error_messages(
+            service_name=svc, window_size_ms=window_size_ms, limit=limit, to_ms=to_ms
+        )
+        http_status = _safe(
+            client.error_http_status,
+            service_name=svc,
+            window_size_ms=window_size_ms,
+            limit=limit,
+            to_ms=to_ms,
+        )
+        endpoints = _safe(
+            client.error_endpoints,
+            service_name=svc,
+            window_size_ms=window_size_ms,
+            limit=limit,
+            to_ms=to_ms,
+        )
         return {
             "source": "instana",
             "available": True,
@@ -904,12 +926,20 @@ def instana_get_application_context(
     """Resolve an Instana Application Perspective → member services + top erroring services."""
     try:
         client = _resolve_client(base_url, api_token, _client_override)
-        out = client.application_context(application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit)
+        out = client.application_context(
+            application, window_size_ms=window_size_ms, to_ms=to_ms, limit=limit
+        )
         return {"source": "instana", "available": True, **out}
     except Exception as exc:
         _report(exc, "instana_get_application_context")
-        return {"source": "instana", "available": False, "error": _error(exc),
-                "application": application, "services": [], "top_error_services": []}
+        return {
+            "source": "instana",
+            "available": False,
+            "error": _error(exc),
+            "application": application,
+            "services": [],
+            "top_error_services": [],
+        }
 
 
 @tool(

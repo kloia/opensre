@@ -513,9 +513,7 @@ def _eks_pod_logs_case() -> ToolFailureCase:
     return ToolFailureCase("eks_pod_logs", patch, invoke, "get_eks_pod_logs", "eks")
 
 
-def _instana_case(
-    case_id: str, tool_name: str, invoke_kwargs: dict[str, Any]
-) -> ToolFailureCase:
+def _instana_case(case_id: str, tool_name: str, invoke_kwargs: dict[str, Any]) -> ToolFailureCase:
     """Every Instana tool shares one call shape: _resolve_client() raising is
     what every except block guards against, so patching it once covers all of
     them without needing to know each tool's specific client method."""
@@ -540,7 +538,9 @@ _INSTANA_FAILURE_CASES: list[ToolFailureCase] = [
         "instana_application_metrics", "instana_application_metrics", {"service_name": "be-gateway"}
     ),
     _instana_case(
-        "instana_infrastructure_health", "instana_infrastructure_health", {"query": "entity.type:host"}
+        "instana_infrastructure_health",
+        "instana_infrastructure_health",
+        {"query": "entity.type:host"},
     ),
     _instana_case("instana_traces", "instana_traces", {"service_name": "be-gateway"}),
     _instana_case("instana_get_trace_detail", "instana_get_trace_detail", {"trace_id": "t1"}),
@@ -552,7 +552,9 @@ _INSTANA_FAILURE_CASES: list[ToolFailureCase] = [
         "instana_get_investigation_context",
         {"service_name": "be-gateway"},
     ),
-    _instana_case("instana_error_analysis", "instana_error_analysis", {"service_name": "be-gateway"}),
+    _instana_case(
+        "instana_error_analysis", "instana_error_analysis", {"service_name": "be-gateway"}
+    ),
     _instana_case(
         "instana_get_application_context", "instana_get_application_context", {"application": "App"}
     ),

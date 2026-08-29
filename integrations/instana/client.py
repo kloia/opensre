@@ -65,7 +65,12 @@ def _sum_series(metrics: dict[str, Any]) -> int:
 
 def _service_filter(service_name: str) -> dict[str, Any]:
     """Build the Instana TAG_FILTER for a service.name EQUALS match."""
-    return {"type": "TAG_FILTER", "name": "service.name", "operator": "EQUALS", "value": service_name}
+    return {
+        "type": "TAG_FILTER",
+        "name": "service.name",
+        "operator": "EQUALS",
+        "value": service_name,
+    }
 
 
 def _region_from(data: dict[str, Any]) -> str:
@@ -278,7 +283,11 @@ class InstanaClient:
         if len(elements) == 1:
             body["tagFilterExpression"] = elements[0]
         elif elements:
-            body["tagFilterExpression"] = {"type": "EXPRESSION", "logicalOperator": "AND", "elements": elements}
+            body["tagFilterExpression"] = {
+                "type": "EXPRESSION",
+                "logicalOperator": "AND",
+                "elements": elements,
+            }
         resp = self.post("/api/application-monitoring/analyze/call-groups", json=body)
         items = resp.get("items", []) if isinstance(resp, dict) else []
         return items if isinstance(items, list) else []
@@ -300,8 +309,13 @@ class InstanaClient:
         Erroneous-only by default; ``erroneous=False`` counts all calls.
         """
         items = self._call_groups(
-            groupby_tag, window_size_ms, service_name, limit,
-            to_ms=to_ms, extra_filter=extra_filter, erroneous=erroneous,
+            groupby_tag,
+            window_size_ms,
+            service_name,
+            limit,
+            to_ms=to_ms,
+            extra_filter=extra_filter,
+            erroneous=erroneous,
         )
         out = [
             {key: (it.get("name") or fallback), "count": _sum_series(it.get("metrics", {}))}
@@ -324,7 +338,12 @@ class InstanaClient:
         message (see ``error_http_status`` / ``error_endpoints``). Ranked by occurrences.
         """
         return self._grouped_error_counts(
-            "call.error.message", "message", "(no message)", service_name, window_size_ms, limit,
+            "call.error.message",
+            "message",
+            "(no message)",
+            service_name,
+            window_size_ms,
+            limit,
             to_ms=to_ms,
         )
 
@@ -341,7 +360,12 @@ class InstanaClient:
         exception message. Ranked by occurrences, descending.
         """
         return self._grouped_error_counts(
-            "call.http.status", "status", "(none)", service_name, window_size_ms, limit,
+            "call.http.status",
+            "status",
+            "(none)",
+            service_name,
+            window_size_ms,
+            limit,
             to_ms=to_ms,
         )
 
@@ -354,7 +378,12 @@ class InstanaClient:
     ) -> list[dict[str, Any]]:
         """Return which endpoints (``call.name``) are erroring, ranked by occurrences."""
         return self._grouped_error_counts(
-            "call.name", "endpoint", "(unknown)", service_name, window_size_ms, limit,
+            "call.name",
+            "endpoint",
+            "(unknown)",
+            service_name,
+            window_size_ms,
+            limit,
             to_ms=to_ms,
         )
 
@@ -366,7 +395,12 @@ class InstanaClient:
     ) -> list[dict[str, Any]]:
         """Return which services are erroring (``service.name``) with occurrence counts, ranked."""
         return self._grouped_error_counts(
-            "service.name", "service", "(unknown)", None, window_size_ms, limit,
+            "service.name",
+            "service",
+            "(unknown)",
+            None,
+            window_size_ms,
+            limit,
             to_ms=to_ms,
         )
 
@@ -379,26 +413,57 @@ class InstanaClient:
     ) -> dict[str, Any]:
         """Resolve an Instana Application Perspective by name and return its member services
         + which member services are erroring most (application-scoped, time-anchored)."""
-        apps = self.get("/api/application-monitoring/applications", params={"nameFilter": application_name, "pageSize": 20})
-        items = apps.get("items", []) if isinstance(apps, dict) else (apps if isinstance(apps, list) else [])
+        apps = self.get(
+            "/api/application-monitoring/applications",
+            params={"nameFilter": application_name, "pageSize": 20},
+        )
+        items = (
+            apps.get("items", [])
+            if isinstance(apps, dict)
+            else (apps if isinstance(apps, list) else [])
+        )
         # Exact label match only — never guess an unrelated application id.
-        match = next((a for a in items if (a.get("label") or "").strip() == application_name.strip()), None)
+        match = next(
+            (a for a in items if (a.get("label") or "").strip() == application_name.strip()), None
+        )
         app_id = (match or {}).get("id")
-        app_filter = {"type": "TAG_FILTER", "name": "application.name",
-                      "operator": "EQUALS", "value": application_name}
+        app_filter = {
+            "type": "TAG_FILTER",
+            "name": "application.name",
+            "operator": "EQUALS",
+            "value": application_name,
+        }
         # Member services of this application (all calls, ranked by volume) — the entry
         # points the agent should drill into. Present even for non-error (e.g. latency) alerts.
         services = self._grouped_error_counts(
-            "service.name", "service", "(unknown)", None, window_size_ms, limit,
-            to_ms=to_ms, extra_filter=app_filter, erroneous=False,
+            "service.name",
+            "service",
+            "(unknown)",
+            None,
+            window_size_ms,
+            limit,
+            to_ms=to_ms,
+            extra_filter=app_filter,
+            erroneous=False,
         )
         # Which member services are actually erroring (application-scoped, erroneous-only).
         top = self._grouped_error_counts(
-            "service.name", "service", "(unknown)", None, window_size_ms, limit,
-            to_ms=to_ms, extra_filter=app_filter, erroneous=True,
+            "service.name",
+            "service",
+            "(unknown)",
+            None,
+            window_size_ms,
+            limit,
+            to_ms=to_ms,
+            extra_filter=app_filter,
+            erroneous=True,
         )
-        return {"application": application_name, "application_id": app_id,
-                "services": services, "top_error_services": top}
+        return {
+            "application": application_name,
+            "application_id": app_id,
+            "services": services,
+            "top_error_services": top,
+        }
 
     def get_trace_detail(
         self,

@@ -23,16 +23,29 @@ def _client_with_post(captured: dict[str, Any], response: dict[str, Any]) -> Ins
 
 _RESPONSE = {
     "items": [
-        {"name": "NOT_FOUND: National ID not found",
-         "metrics": {"calls.sum.3600": [[1, 7000.0], [2, 702.0]]}},
+        {
+            "name": "NOT_FOUND: National ID not found",
+            "metrics": {"calls.sum.3600": [[1, 7000.0], [2, 702.0]]},
+        },
         {"name": "FAILED_PRECONDITION: dup", "metrics": {"calls.sum.3600": [[1, 33.0]]}},
         {"name": None, "metrics": {"calls.sum.3600": [[1, 5.0]]}},
     ]
 }
 
 
-_TRACES_RESPONSE = {"items": [{"trace": {"id": "t1", "label": "POST /pay", "duration": 9,
-                                          "erroneous": True, "service": {"label": "be-payments"}}}]}
+_TRACES_RESPONSE = {
+    "items": [
+        {
+            "trace": {
+                "id": "t1",
+                "label": "POST /pay",
+                "duration": 9,
+                "erroneous": True,
+                "service": {"label": "be-payments"},
+            }
+        }
+    ]
+}
 
 
 def test_traces_erroneous_only_adds_erroneous_filter() -> None:
@@ -144,7 +157,9 @@ _APPS_RESPONSE = {"items": [{"id": "APPID1", "label": "ITSM Platform Lab Environ
 
 
 def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None:
-    client = InstanaClient(InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"}))
+    client = InstanaClient(
+        InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"})
+    )
     calls: dict[str, Any] = {}
 
     def fake_get(path, params=None):
@@ -157,7 +172,9 @@ def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None
 
     client.get = fake_get  # type: ignore[method-assign]
     client.post = fake_post  # type: ignore[method-assign]
-    out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5)
+    out = client.application_context(
+        "ITSM Platform Lab Environment", window_size_ms=6_000, to_ms=999, limit=5
+    )
     assert out["application_id"] == "APPID1"
     assert any(s["service"] == "be-payments" for s in out["top_error_services"])
     assert any(s["service"] == "be-payments" for s in out["services"])  # member services present
@@ -166,18 +183,33 @@ def test_application_context_resolves_app_and_scopes_errors(monkeypatch) -> None
     assert members_body["timeFrame"] == {"to": 999, "windowSize": 6_000}
     assert members_body["group"]["groupbyTag"] == "service.name"
     # member-services query is scoped to application.name only (no trace.erroneous)
-    assert members_body["tagFilterExpression"] == {"type": "TAG_FILTER", "name": "application.name", "operator": "EQUALS", "value": "ITSM Platform Lab Environment"}
+    assert members_body["tagFilterExpression"] == {
+        "type": "TAG_FILTER",
+        "name": "application.name",
+        "operator": "EQUALS",
+        "value": "ITSM Platform Lab Environment",
+    }
     # erroneous query ANDs trace.erroneous + application.name
     tfe = errors_body["tagFilterExpression"]
-    assert tfe["type"] == "EXPRESSION" and {e["name"] for e in tfe["elements"]} == {"trace.erroneous", "application.name"}
+    assert tfe["type"] == "EXPRESSION" and {e["name"] for e in tfe["elements"]} == {
+        "trace.erroneous",
+        "application.name",
+    }
 
 
 def test_application_context_no_match_returns_null_id() -> None:
-    client = InstanaClient(InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"}))
-    def fake_get(path, params=None): return {"items": [{"id": "OTHER", "label": "Some Other App"}]}
-    def fake_post(path, json=None): return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 3.0]]}}]}
+    client = InstanaClient(
+        InstanaConfig.model_validate({"base_url": "https://x.instana.io", "api_token": "t"})
+    )
+
+    def fake_get(path, params=None):
+        return {"items": [{"id": "OTHER", "label": "Some Other App"}]}
+
+    def fake_post(path, json=None):
+        return {"items": [{"name": "be-payments", "metrics": {"calls.sum": [[1, 3.0]]}}]}
+
     client.get = fake_get  # type: ignore[method-assign]
     client.post = fake_post  # type: ignore[method-assign]
     out = client.application_context("ITSM Platform Lab Environment", window_size_ms=6_000)
-    assert out["application_id"] is None                 # no exact match → no guessed id
+    assert out["application_id"] is None  # no exact match → no guessed id
     assert out["top_error_services"][0]["service"] == "be-payments"  # ranking still scoped by name

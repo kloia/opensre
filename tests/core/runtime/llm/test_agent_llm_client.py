@@ -251,9 +251,7 @@ def test_anthropic_invoke_strips_internal_marker_keys(
         return types.SimpleNamespace(content=[], stop_reason="end_turn")
 
     client = AnthropicAgentClient(model="claude-sonnet-4-6")
-    client._client = types.SimpleNamespace(
-        messages=types.SimpleNamespace(create=capture_create)
-    )
+    client._client = types.SimpleNamespace(messages=types.SimpleNamespace(create=capture_create))
 
     messages = [
         {"role": "user", "content": "hello"},
